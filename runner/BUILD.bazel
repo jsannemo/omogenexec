@@ -1,21 +1,21 @@
 load("@rules_rust//rust:rust.bzl", "rust_binary")
 
 rust_binary(
-        name = "omogenexec-runner",
-        srcs = [
-                "src/main.rs",
-                "src/libc_bindings.rs",
-                "src/chroot.rs",
-                "src/sandbox.rs",
-                "src/quota.rs",
-                ],
-        deps = [
-                "//cargo:libc",
-                "//cargo:bitmask",
-                "//cargo:clap",
-                "//cargo:proc_mounts",
-                "//cargo:syscalls",
-                "//cargo:cgroups_rs",
-                "//cargo:nix",
-                ],
-        )
+    name = "omogenexec-runner",
+    srcs = [
+        "src/chroot.rs",
+        "src/libc_bindings.rs",
+        "src/main.rs",
+        "src/quota.rs",
+        "src/sandbox.rs",
+    ],
+    deps = [
+        "//cargo:bitmask",
+        "//cargo:cgroups_rs",
+        "//cargo:clap",
+        "//cargo:libc",
+        "//cargo:nix",
+        "//cargo:proc_mounts",
+        "//cargo:syscalls",
+    ],
+)
