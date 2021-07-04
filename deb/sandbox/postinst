@@ -9,5 +9,7 @@ for k in {0..99}; do
   adduser --quiet omogenexec-user$k omogenexec-users
 done
 
+usermod -g omogenexec-users omogenexec-user
+
 chmod u+s /usr/bin/omogenexec
 chmod u+s /usr/bin/omogenexec-fixpermissions
