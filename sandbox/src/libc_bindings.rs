@@ -125,14 +125,11 @@ pub fn exec(executable: String, mut args: Vec<String>) -> Result<(), String> {
         args_pointers.push(args_cstrs.last().unwrap().as_ptr());
     }
     args_pointers.push(ptr::null());
-    let mut env_pointers = Vec::new();
-    env_pointers.push(ptr::null());
     unsafe {
         #[allow(temporary_cstring_as_ptr)]
-        libc::execve(
+        libc::execv(
             CString::new(executable).unwrap().as_ptr(),
             args_pointers.as_ptr(),
-            env_pointers.as_ptr(),
         )
     };
     Err(format!("execve: {:?}", Error::last_os_error()))
