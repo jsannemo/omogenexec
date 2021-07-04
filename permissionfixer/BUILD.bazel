@@ -1,0 +1,12 @@
+load("@rules_rust//rust:rust.bzl", "rust_binary")
+
+rust_binary(
+    name = "omogenexec-fixpermissions",
+    srcs = [
+        "src/main.rs",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//cargo:clap",
+    ],
+)
