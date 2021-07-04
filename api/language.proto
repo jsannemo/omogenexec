@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package omogen.runner;
+
+// A LanguageGroup vaguely categorizes programming languages. It differs from
+// a Language in that a LanguageGroup can include several possible runtimes for
+// that given language, such as CPython vs PyPy for Python.
+enum LanguageGroup {
+  LANGUAGE_GROUP_UNSPECIFIED = 0;
+  CPP = 1;
+  CSHARP = 2;
+  JAVA = 3;
+  JAVASCRIPT = 4;
+  PYTHON_3 = 5;
+}
+
+// A Language represents an installed compiler or runtime that can be used to
+// execute programs.
+message Language {
+  LanguageGroup group = 1;
+
+  // A version string of the compiler or runtime used for programs of this
+  // language, such as:
+  // - "gcc version 7.3.0 (Debian 7.3.0-5)"
+  // - "Python 3.6.5"
+  string version = 2;
+
+  // A description of how a program of this language is compiled, such as:
+  // - "javac source.java"
+  // - "g++ -O2 -std=c++14 source.cpp"
+  repeated string compilation_description = 3;
+
+  // A description of how a program of this language is run, such as:
+  // - "./program"
+  // - "pypy source.py"
+  // - "java source"
+  string run_description = 4;
+}

@@ -1,4 +1,4 @@
-package runner
+package main
 
 import (
 	"github.com/google/logger"
@@ -19,10 +19,7 @@ type FileLinker struct {
 
 // NewFileLinker returns a new file linker, rooted at the given path.
 func NewFileLinker(dir string) (*FileLinker, error) {
-	base, err := util.NewFileBase(dir)
-	if err != nil {
-		return nil, err
-	}
+	base := util.NewFileBase(dir)
 	base.OwnerGid = util.OmogenexecGroupId()
 	if err := base.Mkdir("."); err != nil {
 		return nil, err

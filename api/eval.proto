@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package omogen.runner;
+
+import "api/program.proto";
+
+enum EvaluationType {
+  EVALUATION_TYPE_UNSPECIFIED = 0;
+  // An input file is passed to a program and its output is compared with an
+  // output file (possibly through an extra validator program).
+  SIMPLE = 1;
+  // The program communicates with a validator program which ias given the
+  // input and output files.
+  INTERACTIVE = 2;
+  // The file with the same base name as the output file is compared with the
+  // output file (possibly through an extra validator program).
+  OUTPUT_ONLY = 3;
+  // The program is first passed the input file, with its output saved to a
+  // file. The file is then checked by a validator program, which may also
+  // rewrite the output. That output is then again passed to the program,
+  // which is then again checked by the validator program.
+  TWO_PASS = 4;
+}
+
+message EvaluationPlan {
+  EvaluationType plan_type = 1;
+  repeated TestGroup groups = 2;
+  CompiledProgram program = 3;
+  CompiledProgram validator = 4;
+  int32 time_limit_ms = 5;
+  int32 mem_limit_kb = 6;
+}
+
+enum ScoringMode {
+  SCORING_MODE_UNSPECIFIED = 0;
+  LOWEST = 1;
+  SUM = 2;
+}
+
+message TestGroup {
+  repeated TestCase cases = 1;
+  double score = 2;
+  repeated string output_validator_flags = 3;
+  bool break_on_fail = 4;
+  ScoringMode scoring_mode = 5;
+}
+
+message TestCase {
+  string name = 1;
+  string input_path = 2;
+  string output_path = 3;
+}
+
+enum Verdict {
+  VERDICT_UNSPECIFIED = 0;
+  ACCEPTED = 1;
+  TIME_LIMIT_EXCEEDED = 2;
+  WRONG_ANSWER = 3;
+  RUN_TIME_ERROR = 4;
+}
+
+enum ResultType {
+  RESULT_TYPE_UNSPECIFIED = 0;
+  TEST_CASE = 1;
+  TEST_GROUP = 2;
+  SUBMISSION = 3;
+}
+
+message Result {
+  ResultType type = 1;
+  Verdict verdict = 2;
+  double score = 3;
+  int32 time_usage_ms = 4;
+}

@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // FileBase represents a given base directory, and allows operations to be performed on files and directories within it.
@@ -25,17 +26,14 @@ type FileBase struct {
 
 // NewFileBase returns a FileBase for the given path. By default, the owner UID and GID of files will be the same as of the
 // current process, and files will not be group writable.
-func NewFileBase(path string) (FileBase, error) {
-	fullPath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return FileBase{}, err
-	}
+func NewFileBase(path string) FileBase {
+	fullPath := filepath.Clean(path)
 	return FileBase{
 		base:          fullPath,
 		OwnerGid:      os.Getgid(),
 		OwnerUid:      os.Getuid(),
 		GroupWritable: false,
-	}, nil
+	}
 }
 
 // Path returns the base path that the FileBase represents.
@@ -57,12 +55,9 @@ func (fb FileBase) SubBase(path string) (FileBase, error) {
 // FullPath returns the path of the file base after traversing the given relative path. If the path would result in a
 // path above the file base, an error is returned.
 func (fb *FileBase) FullPath(subPath string) (string, error) {
-	fullPath, err := filepath.EvalSymlinks(filepath.Join(fb.base, subPath))
-	if err != nil {
-		return "", err
-	}
-	baseComponents := filepath.SplitList(fb.base)
-	newComponents := filepath.SplitList(fullPath)
+	fullPath := filepath.Clean(filepath.Join(fb.base, subPath))
+	baseComponents := strings.Split(fb.base, string(filepath.Separator))
+	newComponents := strings.Split(fullPath, string(filepath.Separator))
 	if len(newComponents) < len(baseComponents) {
 		return "", fmt.Errorf("path %s traverses upwards (too few components)", subPath)
 	}

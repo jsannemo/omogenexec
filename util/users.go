@@ -9,7 +9,6 @@ import (
 
 const omogenexecGroup = "omogenexec-users"
 
-// OmogenexecGroupId returns the group ID of the omogenjudge-clients group.
 func OmogenexecGroupId() int {
 	group, err := user.LookupGroup(omogenexecGroup)
 	if err != nil {

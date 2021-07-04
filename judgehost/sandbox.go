@@ -1,4 +1,4 @@
-package runner
+package main
 
 import (
 	"bufio"
@@ -11,48 +11,7 @@ import (
 	"strings"
 )
 
-// An ExitType describes why a program exited.
-type ExitType int
-
-const (
-	// Exited means the program exited normally with an exit code.
-	Exited ExitType = iota
-	// Signaled means the program was killed by a signal.
-	Signaled
-	// TimedOut means the program was killed due to exceeding its time limit.
-	TimedOut
-)
-
-// An ExecResult describes the result of a single execution.
-type ExecResult struct {
-	// How how the program exited.
-	ExitType ExitType
-	// The exit code. Only set if the program exited with a code.
-	ExitCode int
-	// The termination signal. Only set if the program exited with a signal.
-	Signal int
-	// The time the execution used.
-	TimeUsageMs int
-	// The memory the execution used.
-	MemoryUsageKb int
-}
-
-// CrashedWith checks whether the program exited normally with the given code.
-func (res ExecResult) CrashedWith(code int) bool {
-	return res.ExitType == Exited && res.ExitCode == code
-}
-
-// Crashed checks whether the program exited abnormally.
-func (res ExecResult) Crashed() bool {
-	return (res.ExitType == Exited && res.ExitCode != 0) || res.ExitType == Signaled
-}
-
-// TimedOut checks whether the program exceeded its time limit or not.
-func (res ExecResult) TimedOut() bool {
-	return res.ExitType == TimedOut
-}
-
-type SandboxArgs struct {
+type sandboxArgs struct {
 	WorkingDirectory string
 	InputPath        string
 	OutputPath       string
@@ -68,15 +27,12 @@ type Sandbox struct {
 	sandboxIn  io.WriteCloser
 	sandboxOut *bufio.Scanner
 	sandboxErr strings.Builder
+	waited     bool
 }
 
-func NewSandbox(args SandboxArgs) *Sandbox {
+func NewSandbox(args sandboxArgs) *Sandbox {
 	sandboxArgs := []string{
 		"--sandbox-id", "0",
-		"--working-dir", args.WorkingDirectory,
-		"--stdin", args.InputPath,
-		"--stdout", args.OutputPath,
-		"--stderr", args.ErrorPath,
 		"--time-lim-ms", strconv.Itoa(args.TimeLimitMs),
 		"--wall-time-lim-ms", strconv.Itoa(args.TimeLimitMs*2 + 1000),
 		"--memory-mb", strconv.Itoa(args.MemoryLimitKb),
@@ -84,10 +40,32 @@ func NewSandbox(args SandboxArgs) *Sandbox {
 		"--inodes", "1000",
 		"--blocks", strconv.Itoa(1_000_000_000 / 4096),
 	}
-	sandboxArgs = append(sandboxArgs,
-		mountArgs(
-			append(args.ExtraReadPaths, filepath.Dir(args.InputPath)),
-			append(args.ExtraWritePaths, filepath.Dir(args.OutputPath), filepath.Dir(args.ErrorPath)))...)
+	if args.WorkingDirectory != "" {
+		sandboxArgs = append(sandboxArgs, "--working-dir", args.WorkingDirectory)
+	}
+	if args.InputPath != "" {
+		sandboxArgs = append(sandboxArgs, "--stdin", args.InputPath)
+	}
+	if args.OutputPath != "" {
+		sandboxArgs = append(sandboxArgs, "--stdout", args.OutputPath)
+	}
+	if args.ErrorPath != "" {
+		sandboxArgs = append(sandboxArgs, "--stderr", args.ErrorPath)
+	}
+
+	readPaths := args.ExtraReadPaths
+	if args.InputPath != "" {
+		readPaths = append(readPaths, filepath.Dir(args.InputPath))
+	}
+	writePaths := args.ExtraWritePaths
+	if args.OutputPath != "" {
+		writePaths = append(writePaths, filepath.Dir(args.OutputPath))
+	}
+	if args.ErrorPath != "" {
+		writePaths = append(writePaths, filepath.Dir(args.ErrorPath))
+	}
+	sandboxArgs = append(sandboxArgs, mountArgs(readPaths, writePaths)...)
+	logger.Infof("executing %v", sandboxArgs)
 	cmd := exec.Command("/usr/bin/omogenexec", sandboxArgs...)
 	sandbox := &Sandbox{
 		cmd: cmd,
@@ -143,7 +121,7 @@ func (s *Sandbox) Run(cmd string, args []string) (ExecResult, error) {
 			if killReason == "tle" {
 				res.ExitType = TimedOut
 			} else if killReason == "setup" {
-				return res, fmt.Errorf("sandbox run died during setup (misconfigured?)")
+				return res, fmt.Errorf("sandbox run died during setup")
 			} else {
 				logger.Fatalf("Unrecognized output from sandbox (killed %s)", killReason)
 			}
@@ -184,13 +162,20 @@ func (s *Sandbox) Run(cmd string, args []string) (ExecResult, error) {
 
 func (s *Sandbox) sandboxToken() string {
 	if !s.sandboxOut.Scan() {
-		logger.Fatalf("Failed reading to the sandbox: %v", s.sandboxOut.Err())
+		s.Finish()
+		logger.Fatalf("Failed reading to the sandbox: %v", s.sandboxErr.String())
 	}
 	return s.sandboxOut.Text()
 }
 
-func (s *Sandbox) Finish() error {
-	return s.sandboxIn.Close()
+func (s *Sandbox) Finish() {
+	if !s.waited {
+		s.waited = true
+		if err := s.sandboxIn.Close(); err != nil {
+			panic(err)
+		}
+		s.cmd.Wait()
+	}
 }
 
 func (s *Sandbox) Logs() string {
@@ -202,6 +187,9 @@ func mountArgs(readable, writable []string) []string {
 	var args []string
 	// Writable first, in case a path exists in both
 	for _, path := range writable {
+		if len(path) == 0 {
+			continue
+		}
 		if seen[path] {
 			continue
 		}
@@ -209,6 +197,9 @@ func mountArgs(readable, writable []string) []string {
 		args = append(args, "--writable", path)
 	}
 	for _, path := range readable {
+		if len(path) == 0 {
+			continue
+		}
 		if seen[path] {
 			continue
 		}

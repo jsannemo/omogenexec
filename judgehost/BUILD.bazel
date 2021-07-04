@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "judgehost_lib",
+    srcs = [
+        "compilers.go",
+        "diff.go",
+        "filelinker.go",
+        "language.go",
+        "main.go",
+        "runnable.go",
+        "sandbox.go",
+    ],
+    importpath = "github.com/jsannemo/omogenexec/judgehost",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "//util",
+        "@com_github_google_logger//:logger",
+        "@org_golang_google_grpc//:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "judgehost",
+    embed = [":judgehost_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "judgehost_test",
+    srcs = ["diff_test.go"],
+    embed = [":judgehost_lib"],
+)

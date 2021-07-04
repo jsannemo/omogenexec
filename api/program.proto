@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package omogen.runner;
+
+import "api/language.proto";
+
+message SourceFile {
+  string path = 1;
+  bytes contents = 2;
+}
+
+message Program {
+  repeated SourceFile sources = 1;
+  LanguageGroup language = 2;
+}
+
+message CompiledProgram {
+  string program_root = 1;
+  string run_command = 2;
+}
