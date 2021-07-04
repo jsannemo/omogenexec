@@ -1,9 +1,4 @@
-// Package diff implements a structural, non-exact diff of two strings.
-//
-// The default mode is that the strings are compared in a token-by-token manner, where for example
-// tokens that can be parsed as floating-point integers are parsed as such according to some common
-// formats
-package diff
+package runner
 
 import (
 	"bufio"

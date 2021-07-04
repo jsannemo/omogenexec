@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "runner",
+    srcs = [
+        "diff.go",
+        "filelinker.go",
+        "sandbox.go",
+    ],
+    importpath = "github.com/jsannemo/omogenexec/runner",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util",
+        "@com_github_google_logger//:logger",
+    ],
+)
+
+go_test(
+    name = "runner_test",
+    srcs = ["diff_test.go"],
+    embed = [":runner"],
+)
