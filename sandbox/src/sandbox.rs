@@ -168,6 +168,7 @@ pub fn sandbox_main(ctx: Context) -> isize {
                 cg_acct.reset().unwrap();
                 if s != "ok" {
                     println!("killed setup");
+                    println!("done");
                     continue;
                 }
                 loop {
@@ -238,7 +239,9 @@ pub fn sandbox_main(ctx: Context) -> isize {
                 // running until we kill them; we must this keep measuring resources
                 // until now
                 println!("mem {:?}", cg_mem.memswap().max_usage_in_bytes);
-                println!("cpu {:?}", cg_acct.cpuacct().usage);
+                // Nanos -> Millis
+                println!("cpu {:?}", cg_acct.cpuacct().usage / 1_000_000);
+                println!("done");
             }
         }
         eprintln!("done with cmd: {:?} {:?}", cmd.0, cmd.1);
