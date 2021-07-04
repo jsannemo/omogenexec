@@ -9,10 +9,19 @@ pkg_tar(
 )
 
 pkg_tar(
+    name = "omogenexec-permissions-bin",
+    srcs = ["//permissionfixer:omogenexec-fixpermissions"],
+    mode = "0755",
+    package_dir = "/usr/bin",
+    strip_prefix = "/permissionfixer",
+)
+
+pkg_tar(
     name = "debian-data",
     extension = "tar.gz",
     deps = [
         ":omogenexec-bin",
+        ":omogenexec-permissions-bin",
     ],
 )
 

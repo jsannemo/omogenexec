@@ -10,3 +10,4 @@ for k in {0..99}; do
 done
 
 chmod u+s /usr/bin/omogenexec
+chmod u+s /usr/bin/omogenexec-fixpermissions
