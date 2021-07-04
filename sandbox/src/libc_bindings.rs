@@ -1,3 +1,9 @@
+pub use libc::dev_t;
+pub use libc::gid_t;
+pub use libc::pid_t;
+pub use libc::stat;
+pub use libc::uid_t;
+pub use libc::FILE;
 use libc::{dqblk, quotactl, SYS_close_range, QCMD, QIF_LIMITS, Q_SETQUOTA, USRQUOTA};
 use std::ffi::CString;
 use std::io::Error;
@@ -5,13 +11,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
 use std::result::Result;
-
-pub use libc::dev_t;
-pub use libc::gid_t;
-pub use libc::pid_t;
-pub use libc::stat;
-pub use libc::uid_t;
-pub use libc::FILE;
 
 extern "C" {
     pub static mut stdin: *mut FILE;
@@ -282,6 +281,15 @@ pub fn repoint_stream(path: String, stream: *mut FILE, mode: FileAccessMode) -> 
     };
     if ret == ptr::null_mut() {
         Err(format!("freopen: {:?}", Error::last_os_error()))
+    } else {
+        Ok(())
+    }
+}
+
+pub fn fclose(stream: *mut FILE) -> Result<(), String> {
+    let ret = unsafe { libc::fclose(stream) };
+    if ret != 0 {
+        Err(format!("fclose: {:?}", Error::last_os_error()))
     } else {
         Ok(())
     }

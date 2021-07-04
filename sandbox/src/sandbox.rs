@@ -2,9 +2,9 @@ use cgroups_rs::*;
 
 use chroot::{apply_chroot, make_mount, mount_procfs, read_only_copy_mount, Mount};
 use libc_bindings::{
-    close_nonstd_fds, drop_groups, exec, fork, gid_t, kill, make_closing_pipes, privatize_mounts,
-    repoint_stream, set_kill_on_parent_death, set_res_uid_and_gid, stderr, stdin, stdout, uid_t,
-    wait_any_nohang, wait_for_nohang, FileAccessMode, ForkProcess,
+    close_nonstd_fds, drop_groups, exec, fclose, fork, gid_t, kill, make_closing_pipes,
+    privatize_mounts, repoint_stream, set_kill_on_parent_death, set_res_uid_and_gid, stderr, stdin,
+    stdout, uid_t, wait_any_nohang, wait_for_nohang, FileAccessMode, ForkProcess,
 };
 use std::{
     fs::File,
@@ -60,9 +60,20 @@ fn setup_mounts(ctx: &Context) {
         let parts = path.find(':');
         let paths = match parts {
             None => (PathBuf::from(path), PathBuf::from(path.to_string())),
-            Some(idx) => (PathBuf::from(path[..idx].to_string()), PathBuf::from(path[idx + 1..].to_string()))
+            Some(idx) => (
+                PathBuf::from(path[..idx].to_string()),
+                PathBuf::from(path[idx + 1..].to_string()),
+            ),
         };
-        make_mount(&ctx.container_path, &Mount {writable: true, outside: paths.0, inside: paths.1}).unwrap();
+        make_mount(
+            &ctx.container_path,
+            &Mount {
+                writable: true,
+                outside: paths.0,
+                inside: paths.1,
+            },
+        )
+        .unwrap();
     }
     let usrlib32 = PathBuf::from("/usr/lib32");
     if usrlib32.exists() && usrlib32.is_dir() {
@@ -252,9 +263,21 @@ pub fn sandbox_main(ctx: Context) -> isize {
 
 fn set_streams(ctx: &Context) -> Result<(), String> {
     unsafe {
-        repoint_stream(ctx.stdin.to_string(), stdin, FileAccessMode::Readable)?;
-        repoint_stream(ctx.stdout.to_string(), stdout, FileAccessMode::Writable)?;
-        repoint_stream(ctx.stderr.to_string(), stderr, FileAccessMode::Writable)?;
+        if ctx.stdin.len() == 0 {
+            fclose(stdin)?;
+        } else {
+            repoint_stream(ctx.stdin.to_string(), stdin, FileAccessMode::Readable)?;
+        }
+        if ctx.stdout.len() == 0 {
+            fclose(stdout)?;
+        } else {
+            repoint_stream(ctx.stdout.to_string(), stdout, FileAccessMode::Writable)?;
+        }
+        if ctx.stderr.len() == 0 {
+            fclose(stderr)?;
+        } else {
+            repoint_stream(ctx.stderr.to_string(), stderr, FileAccessMode::Writable)?;
+        }
     }
     Ok(())
 }

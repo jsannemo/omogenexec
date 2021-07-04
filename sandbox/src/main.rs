@@ -14,7 +14,10 @@ use clap::Clap;
 use libc_bindings::{find_group, find_user, pid_t, set_kill_on_parent_death, wait_for};
 use quota::set_quota;
 use sandbox::{sandbox_main, Context};
-use std::{path::{Path, PathBuf}, process};
+use std::{
+    path::{Path, PathBuf},
+    process,
+};
 
 const SANDBOX_USER_PREFIX: &str = "omogenexec-user";
 const SANDBOX_GROUP: &str = "omogenexec-users";
@@ -22,7 +25,7 @@ const CONTAINER_ROOT_PATH: &str = "/var/lib/omogen/sandbox";
 const MAX_CONTAINERS: u32 = 100;
 
 #[derive(Clap)]
-#[clap(name = "omogenexec-runner", about = "A low-level sandbox.")]
+#[clap(name = "omogenexec", about = "A low-level sandbox.")]
 struct Opt {
     /// Sandbox ID: between 0 and 100
     #[clap(long)]
