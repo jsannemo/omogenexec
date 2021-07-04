@@ -1,0 +1,32 @@
+load("@rules_pkg//:pkg.bzl", "pkg_deb", "pkg_tar")
+
+pkg_tar(
+    name = "omogenexec-bin",
+    srcs = ["//sandbox:omogenexec"],
+    mode = "0755",
+    package_dir = "/usr/bin",
+    strip_prefix = "/sandbox",
+)
+
+pkg_tar(
+    name = "debian-data",
+    extension = "tar.gz",
+    deps = [
+        ":omogenexec-bin",
+    ],
+)
+
+pkg_deb(
+    name = "omogenexec-debian",
+    architecture = "amd64",
+    data = ":debian-data",
+    depends = [
+        "quota",
+    ],
+    description = "A small process sandbox",
+    maintainer = "Johan Sannemo <johan.sannemo@kodsport.se>",
+    package = "omogenexec",
+    postinst = "postinst",
+    postrm = "postrm",
+    version = "0.0.1",
+)

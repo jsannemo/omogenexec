@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+mkdir -p /var/lib/omogen/sandbox/
+addgroup --system omogenexec-users --quiet
+adduser --system omogenexec-user --no-create-home --quiet
+for k in {0..99}; do
+  # adduser doesn't fail if the user already exists
+  adduser --system omogenexec-user$k --no-create-home --quiet
+  adduser --quiet omogenexec-user$k omogenexec-users
+done
+
+chmod u+s /usr/bin/omogenexec
