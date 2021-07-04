@@ -25,6 +25,7 @@ pub struct Context {
     pub stderr: String,
     pub readable: Vec<String>,
     pub writable: Vec<String>,
+    pub working_directory: PathBuf,
     pub mem_limit_bytes: i64,
     pub time_lim: std::time::Duration,
     pub wall_time_lim: std::time::Duration,
@@ -140,7 +141,7 @@ pub fn sandbox_main(ctx: Context) -> isize {
         eprintln!("cmd: {:?} {:?}", cmd.0, cmd.1);
         match fork().unwrap() {
             ForkProcess::Child => {
-                apply_chroot(&ctx.container_path);
+                apply_chroot(&ctx.container_path, &ctx.working_directory);
                 drop_groups().unwrap();
                 set_res_uid_and_gid(ctx.sandbox_uid, ctx.sandbox_gid).unwrap();
                 // Close the read end

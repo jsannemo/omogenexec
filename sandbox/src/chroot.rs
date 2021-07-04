@@ -60,7 +60,7 @@ pub fn make_mount(root: &Path, mount_opts: &Mount) -> Result<(), String> {
     mount(outside, target_path, base_opts)
 }
 
-pub fn apply_chroot(container_path: &Path) {
+pub fn apply_chroot(container_path: &Path, working_dir: &Path) {
     chroot(&container_path).unwrap();
-    chdir(&PathBuf::from("/")).unwrap();
+    chdir(&working_dir).unwrap();
 }

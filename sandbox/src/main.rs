@@ -14,7 +14,7 @@ use clap::Clap;
 use libc_bindings::{find_group, find_user, pid_t, set_kill_on_parent_death, wait_for};
 use quota::set_quota;
 use sandbox::{sandbox_main, Context};
-use std::{path::Path, process};
+use std::{path::{Path, PathBuf}, process};
 
 const SANDBOX_USER_PREFIX: &str = "omogenexec-user";
 const SANDBOX_GROUP: &str = "omogenexec-users";
@@ -44,6 +44,9 @@ struct Opt {
     /// List of paths that should be read-write in the sandbox
     #[clap(long)]
     writable: Vec<String>,
+    /// Working directory of the sandbox process
+    #[clap(long, default_value = "/")]
+    working_dir: String,
 
     /// The file system quota in blocks
     #[clap(long)]
@@ -88,9 +91,10 @@ fn main() {
         stderr: opt.stderr,
         readable: opt.readable,
         writable: opt.writable,
+        working_directory: PathBuf::from(opt.working_dir),
         mem_limit_bytes: opt.memory_mb as i64 * 1024 * 1024,
         time_lim: std::time::Duration::from_millis(opt.time_lim_ms),
-        wall_time_lim: std::time::Duration::from_millis(opt.time_lim_ms + 1000),
+        wall_time_lim: std::time::Duration::from_millis(opt.time_lim_ms + 5000),
         pid_limit: opt.pid_limit,
     };
 
