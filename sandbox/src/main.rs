@@ -60,6 +60,9 @@ struct Opt {
     /// The CPU time limit in milliseconds.
     #[clap(long)]
     time_lim_ms: u64,
+    /// The wall-clock time limit in milliseconds.
+    #[clap(long)]
+    wall_time_lim_ms: u64,
     /// The maximum number of concurrent processes the sandboxed process may create
     #[clap(long)]
     pid_limit: i64,
@@ -94,7 +97,7 @@ fn main() {
         working_directory: PathBuf::from(opt.working_dir),
         mem_limit_bytes: opt.memory_mb as i64 * 1024 * 1024,
         time_lim: std::time::Duration::from_millis(opt.time_lim_ms),
-        wall_time_lim: std::time::Duration::from_millis(opt.time_lim_ms + 5000),
+        wall_time_lim: std::time::Duration::from_millis(opt.wall_time_lim_ms),
         pid_limit: opt.pid_limit,
     };
 
