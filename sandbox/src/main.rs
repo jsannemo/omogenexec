@@ -33,13 +33,13 @@ struct Opt {
 
     /// The path inside the sandbox that stdin should be redirected to
     #[clap(long)]
-    stdin: String,
+    stdin: Option<String>,
     /// The path inside the sandbox that stdout should be redirected to
     #[clap(long)]
-    stdout: String,
+    stdout: Option<String>,
     /// The path inside the sandbox that stderr should be redirected to
     #[clap(long)]
-    stderr: String,
+    stderr: Option<String>,
 
     /// List of paths that should be read-only in the sandbox
     #[clap(long)]
@@ -92,9 +92,9 @@ fn main() {
         sandbox_gid: find_group(SANDBOX_GROUP.to_string()).unwrap().gid,
         container_path: Path::new(CONTAINER_ROOT_PATH).join(opt.sandbox_id.to_string()),
         sandbox_id: opt.sandbox_id,
-        stdin: opt.stdin,
-        stdout: opt.stdout,
-        stderr: opt.stderr,
+        stdin: opt.stdin.unwrap_or("".to_string()),
+        stdout: opt.stdout.unwrap_or("".to_string()),
+        stderr: opt.stderr.unwrap_or("".to_string()),
         readable: opt.readable,
         writable: opt.writable,
         working_directory: PathBuf::from(opt.working_dir),
