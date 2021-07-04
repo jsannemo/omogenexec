@@ -1,6 +1,6 @@
 use cgroups_rs::*;
 
-use chroot::{apply_chroot, make_mount, mount_procfs, read_only_copy_mount, writable_mount};
+use chroot::{apply_chroot, make_mount, mount_procfs, read_only_copy_mount, Mount};
 use libc_bindings::{
     close_nonstd_fds, drop_groups, exec, fork, gid_t, kill, make_closing_pipes, privatize_mounts,
     repoint_stream, set_kill_on_parent_death, set_res_uid_and_gid, stderr, stdin, stdout, uid_t,
@@ -56,7 +56,12 @@ fn setup_mounts(ctx: &Context) {
         .unwrap();
     }
     for path in &ctx.writable {
-        make_mount(&ctx.container_path, &writable_mount(PathBuf::from(path))).unwrap();
+        let parts = path.find(':');
+        let paths = match parts {
+            None => (PathBuf::from(path), PathBuf::from(path.to_string())),
+            Some(idx) => (PathBuf::from(path[..idx].to_string()), PathBuf::from(path[idx + 1..].to_string()))
+        };
+        make_mount(&ctx.container_path, &Mount {writable: true, outside: paths.0, inside: paths.1}).unwrap();
     }
     let usrlib32 = PathBuf::from("/usr/lib32");
     if usrlib32.exists() && usrlib32.is_dir() {

@@ -5,24 +5,16 @@ use std::{
 };
 
 pub struct Mount {
-    inside: PathBuf,
-    outside: Option<PathBuf>,
-    writable: bool,
+    pub inside: PathBuf,
+    pub outside: PathBuf,
+    pub writable: bool,
 }
 
 pub fn read_only_copy_mount(path: PathBuf) -> Mount {
     Mount {
-        inside: path,
-        outside: None,
+        inside: path.clone(),
+        outside: path,
         writable: false,
-    }
-}
-
-pub fn writable_mount(path: PathBuf) -> Mount {
-    Mount {
-        inside: path,
-        outside: None,
-        writable: true,
     }
 }
 
@@ -38,18 +30,15 @@ pub fn mount_procfs(root: &Path) {
 }
 
 pub fn make_mount(root: &Path, mount_opts: &Mount) -> Result<(), String> {
-    if !mount_opts.inside.is_absolute() {
+    if !mount_opts.outside.is_absolute() {
         return Err(format!(
             "Mount path {:?} is not absolute",
-            mount_opts.inside
+            mount_opts.outside
         ));
     }
-    let target = root.join(mount_opts.inside.as_path().strip_prefix("/").unwrap());
+    let outside = mount_opts.outside.as_path();
+    let target = root.join(mount_opts.inside.strip_prefix("/").unwrap());
     let target_path = target.as_path();
-    let outside = match &mount_opts.outside {
-        None => mount_opts.inside.as_path(),
-        Some(path) => path.as_path(),
-    };
     std::fs::create_dir_all(&target).unwrap();
 
     // NoDev: ensure we can't access special devices somehow in our sandbox.

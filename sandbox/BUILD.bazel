@@ -1,7 +1,7 @@
 load("@rules_rust//rust:rust.bzl", "rust_binary")
 
 rust_binary(
-    name = "omogenexec-runner",
+    name = "omogenexec",
     srcs = [
         "src/chroot.rs",
         "src/libc_bindings.rs",
@@ -9,6 +9,7 @@ rust_binary(
         "src/quota.rs",
         "src/sandbox.rs",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         "//cargo:bitmask",
         "//cargo:cgroups_rs",
