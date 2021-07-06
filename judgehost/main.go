@@ -68,6 +68,11 @@ func main() {
 					InputPath:  "/var/lib/omogen/problems/helloworld/data/01.in",
 					OutputPath: "/var/lib/omogen/problems/helloworld/data/01.ans",
 				},
+				{
+					Name:       "02",
+					InputPath:  "/var/lib/omogen/problems/helloworld/data/01.in",
+					OutputPath: "/var/lib/omogen/problems/helloworld/data/01.ans",
+				},
 			},
 			Groups:               nil,
 			Name:                 "",

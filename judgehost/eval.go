@@ -104,12 +104,12 @@ func evalableLess(a *evalable, b *evalable) bool {
 	if a.TestGroup != nil {
 		aName = a.TestGroup.Name
 	} else {
-		aName = b.TestGroup.Name
+		aName = a.TestCase.Name
 	}
 	if b.TestGroup != nil {
 		bName = b.TestGroup.Name
 	} else {
-		bName = b.TestGroup.Name
+		bName = b.TestCase.Name
 	}
 	return aName < bName
 }
@@ -239,6 +239,9 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, validatorFlags []string, ou
 		}
 	}
 	res.TimeUsageMs = int32(exit.TimeUsageMs)
+	if err := e.linker.clear(); err != nil {
+		return nil, err
+	}
 	e.resultChan <- res
 	return res, nil
 }
