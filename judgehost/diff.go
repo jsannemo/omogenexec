@@ -68,7 +68,7 @@ func Diff(reference, output io.Reader, args DiffArgs) (*DiffResult, error) {
 }
 
 func matchToken(ref, out string, args DiffArgs) (bool, string) {
-	logger.Infof("diff %s %s", ref, out)
+	logger.Infof("Diff %s %s", ref, out)
 	if args.ParseFloats {
 		var refFloat, outFloat float64
 		strVal := ""
@@ -78,7 +78,7 @@ func matchToken(ref, out string, args DiffArgs) (bool, string) {
 			}
 			logger.Infof("got decimals %f %f", refFloat, outFloat)
 			diff := math.Abs(refFloat - outFloat)
-			logger.Infof("float diff %f", diff)
+			logger.Infof("float Diff %f", diff)
 			if !(diff <= args.AbsolutePrec) &&
 				!(diff <= args.RelativePrec*math.Abs(refFloat)) {
 				return false, fmt.Sprintf(
@@ -89,7 +89,7 @@ func matchToken(ref, out string, args DiffArgs) (bool, string) {
 		}
 	}
 	diff := !strings.EqualFold(ref, out)
-	logger.Infof("diff w/o case? %v", diff)
+	logger.Infof("Diff w/o case? %v", diff)
 	if diff {
 		return false, fmt.Sprintf("Output was %s, expected %s", out, ref)
 	}
@@ -99,26 +99,26 @@ func matchToken(ref, out string, args DiffArgs) (bool, string) {
 	return true, ""
 }
 
-type position struct {
+type Position struct {
 	Line int
 	Col  int
 }
 
-func (p *position) String() string {
+func (p *Position) String() string {
 	return fmt.Sprintf("%d:%d", p.Line, p.Col)
 }
 
 type positionedScanner struct {
 	reader         *bufio.Reader
 	spaceSensitive bool
-	pos            position
+	pos            Position
 }
 
 func newPositionedScanner(reader *bufio.Reader, spaceSensitive bool) positionedScanner {
 	return positionedScanner{
 		reader:         reader,
 		spaceSensitive: spaceSensitive,
-		pos: position{
+		pos: Position{
 			Line: 1,
 			Col:  1,
 		},
@@ -126,7 +126,7 @@ func newPositionedScanner(reader *bufio.Reader, spaceSensitive bool) positionedS
 }
 
 type posToken struct {
-	Pos   position
+	Pos   Position
 	Token []byte
 }
 

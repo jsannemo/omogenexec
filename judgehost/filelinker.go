@@ -6,19 +6,19 @@ import (
 	"github.com/jsannemo/omogenexec/util"
 )
 
-// FileLinker is used to swap easily link files into two directories, one for read-only files and one for writable files.
+// fileLinker is used to swap easily link files into two directories, one for read-only files and one for writable files.
 //
 // The main use case it for easily swapping out readable and writable files that should have the
 // same name within a container executing a program multiple times, such as input and output files.
 // It keeps all links in a small number of directories, which makes it easy to clear up the file system
 // environment between runs.
-type FileLinker struct {
+type fileLinker struct {
 	readBase  *util.FileBase
 	writeBase *util.FileBase
 }
 
 // NewFileLinker returns a new file linker, rooted at the given path.
-func NewFileLinker(dir string) (*FileLinker, error) {
+func NewFileLinker(dir string) (*fileLinker, error) {
 	base := util.NewFileBase(dir)
 	base.OwnerGid = util.OmogenexecGroupId()
 	if err := base.Mkdir("."); err != nil {
@@ -32,7 +32,7 @@ func NewFileLinker(dir string) (*FileLinker, error) {
 	if err != nil {
 		return nil, err
 	}
-	linker := &FileLinker{
+	linker := &fileLinker{
 		readBase:  &reader,
 		writeBase: &writer,
 	}
@@ -46,7 +46,7 @@ func NewFileLinker(dir string) (*FileLinker, error) {
 	return linker, nil
 }
 
-func (fl *FileLinker) base(writeable bool) *util.FileBase {
+func (fl *fileLinker) base(writeable bool) *util.FileBase {
 	if writeable {
 		return fl.writeBase
 	} else {
@@ -55,7 +55,7 @@ func (fl *FileLinker) base(writeable bool) *util.FileBase {
 }
 
 // PathFor returns the path that a file will get inside the linker.
-func (fl *FileLinker) PathFor(inName string, writeable bool) string {
+func (fl *fileLinker) PathFor(inName string, writeable bool) string {
 	str, err := fl.base(writeable).FullPath(inName)
 	if err != nil {
 		logger.Fatalf("Tried to use an env with relative path: %v", err)
@@ -64,12 +64,12 @@ func (fl *FileLinker) PathFor(inName string, writeable bool) string {
 }
 
 // LinkFile hard links the file path into the inside root.
-func (fl *FileLinker) LinkFile(path, inName string, writeable bool) error {
+func (fl *fileLinker) LinkFile(path, inName string, writeable bool) error {
 	return fl.base(writeable).LinkInto(path, inName)
 }
 
-// Clear resets the environment for a new execution.
-func (fl *FileLinker) Clear() error {
+// clear resets the environment for a new execution.
+func (fl *fileLinker) clear() error {
 	rerr := fl.readBase.RemoveContents(".")
 	werr := fl.writeBase.RemoveContents(".")
 	if rerr != nil {

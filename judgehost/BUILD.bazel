@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "compilers.go",
         "diff.go",
+        "eval.go",
         "filelinker.go",
         "language.go",
         "main.go",

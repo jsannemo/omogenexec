@@ -16,5 +16,5 @@ message Program {
 
 message CompiledProgram {
   string program_root = 1;
-  string run_command = 2;
+  repeated string run_command = 2;
 }

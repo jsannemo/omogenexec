@@ -126,12 +126,12 @@ pub fn exec(executable: String, mut args: Vec<String>) -> Result<(), String> {
     args_pointers.push(ptr::null());
     unsafe {
         #[allow(temporary_cstring_as_ptr)]
-        libc::execv(
+        libc::execvp(
             CString::new(executable).unwrap().as_ptr(),
             args_pointers.as_ptr(),
         )
     };
-    Err(format!("execve: {:?}", Error::last_os_error()))
+    Err(format!("execvp: {:?}", Error::last_os_error()))
 }
 
 bitmask! {

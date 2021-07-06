@@ -7,18 +7,17 @@ import (
 	"github.com/jsannemo/omogenexec/util"
 	"path"
 	"path/filepath"
-	"strings"
 )
 
-type compilation struct {
-	// This is unset if the compilation failed.
+type Compilation struct {
+	// This is unset if the Compilation failed.
 	Program        *apipb.CompiledProgram
 	CompilerErrors string
 }
 
-type compileFunc func(program *apipb.Program, outputBase util.FileBase) (*compilation, error)
+type CompileFunc func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error)
 
-func compile(program *apipb.Program, outputPath string) (*compilation, error) {
+func Compile(program *apipb.Program, outputPath string) (*Compilation, error) {
 	langs := GetLanguages()
 	lang, found := langs[program.Language]
 	if !found {
@@ -39,16 +38,18 @@ func compile(program *apipb.Program, outputPath string) (*compilation, error) {
 	return lang.Compile(program, fb)
 }
 
-func noCompile(runCommand string, include func(string) bool) compileFunc {
-	return func(program *apipb.Program, outputBase util.FileBase) (*compilation, error) {
+// NoCompile represents compilation that only copies some of the source files and uses the given
+// Run command to execute the program.
+func NoCompile(runCommand []string, include func(string) bool) CompileFunc {
+	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
 		var filteredPaths []string
 		for _, file := range program.Sources {
 			if include(file.Path) {
 				filteredPaths = append(filteredPaths, file.Path)
 			}
 		}
-		runCommand = strings.ReplaceAll(runCommand, "{files}", strings.Join(filteredPaths, " "))
-		return &compilation{
+		runCommand = substituteArgs(runCommand, filteredPaths)
+		return &Compilation{
 			Program: &apipb.CompiledProgram{
 				ProgramRoot: outputBase.Path(),
 				RunCommand:  runCommand,
@@ -56,8 +57,8 @@ func noCompile(runCommand string, include func(string) bool) compileFunc {
 	}
 }
 
-func cppCompile(gppPath string) compileFunc {
-	return func(program *apipb.Program, outputBase util.FileBase) (*compilation, error) {
+func CppCompile(gppPath string) CompileFunc {
+	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
 		var filteredPaths []string
 		for _, file := range program.Sources {
 			if isCppFile(file.Path) {
@@ -65,29 +66,29 @@ func cppCompile(gppPath string) compileFunc {
 			}
 		}
 		sandboxArgs := sandboxForCompile(outputBase.Path())
-		sandbox := NewSandbox(sandboxArgs)
-		err := sandbox.Start()
+		sandbox := newSandbox(0, sandboxArgs)
+		err := sandbox.start()
 		if err != nil {
 			return nil, err
 		}
-		run, err := sandbox.Run(gppPath, substituteArgs(gppFlags, filteredPaths))
-		sandbox.Finish()
+		run, err := sandbox.Run(append([]string{gppPath}, substituteArgs(gppFlags, filteredPaths)...))
+		sandbox.finish()
 		if err != nil {
-			return nil, fmt.Errorf("sandbox failed: %v, %v", err, sandbox.sandboxErr.String())
+			return nil, fmt.Errorf("Sandbox failed: %v, %v", err, sandbox.sandboxErr.String())
 		}
 		stderr, err := outputBase.ReadFile("__compiler_errors")
 		if err != nil {
 			return nil, fmt.Errorf("could not read compiler errors: %v", err)
 		}
 		if !run.CrashedWith(0) {
-			return &compilation{
+			return &Compilation{
 				CompilerErrors: string(stderr),
 			}, nil
 		}
-		return &compilation{
+		return &Compilation{
 			Program: &apipb.CompiledProgram{
 				ProgramRoot: outputBase.Path(),
-				RunCommand:  "./a.out",
+				RunCommand:  []string{"./a.out"},
 			}}, nil
 	}
 }

@@ -30,9 +30,9 @@ type Sandbox struct {
 	waited     bool
 }
 
-func NewSandbox(args sandboxArgs) *Sandbox {
+func newSandbox(id int, args sandboxArgs) *Sandbox {
 	sandboxArgs := []string{
-		"--sandbox-id", "0",
+		"--sandbox-id", strconv.Itoa(id),
 		"--time-lim-ms", strconv.Itoa(args.TimeLimitMs),
 		"--wall-time-lim-ms", strconv.Itoa(args.TimeLimitMs*2 + 1000),
 		"--memory-mb", strconv.Itoa(args.MemoryLimitKb),
@@ -40,78 +40,71 @@ func NewSandbox(args sandboxArgs) *Sandbox {
 		"--inodes", "1000",
 		"--blocks", strconv.Itoa(1_000_000_000 / 4096),
 	}
+	readPaths := args.ExtraReadPaths
+	writePaths := args.ExtraWritePaths
 	if args.WorkingDirectory != "" {
 		sandboxArgs = append(sandboxArgs, "--working-dir", args.WorkingDirectory)
 	}
 	if args.InputPath != "" {
 		sandboxArgs = append(sandboxArgs, "--stdin", args.InputPath)
+		readPaths = append(readPaths, filepath.Dir(args.InputPath))
 	}
 	if args.OutputPath != "" {
 		sandboxArgs = append(sandboxArgs, "--stdout", args.OutputPath)
-	}
-	if args.ErrorPath != "" {
-		sandboxArgs = append(sandboxArgs, "--stderr", args.ErrorPath)
-	}
-
-	readPaths := args.ExtraReadPaths
-	if args.InputPath != "" {
-		readPaths = append(readPaths, filepath.Dir(args.InputPath))
-	}
-	writePaths := args.ExtraWritePaths
-	if args.OutputPath != "" {
 		writePaths = append(writePaths, filepath.Dir(args.OutputPath))
 	}
 	if args.ErrorPath != "" {
+		sandboxArgs = append(sandboxArgs, "--stderr", args.ErrorPath)
 		writePaths = append(writePaths, filepath.Dir(args.ErrorPath))
 	}
 	sandboxArgs = append(sandboxArgs, mountArgs(readPaths, writePaths)...)
 	logger.Infof("executing %v", sandboxArgs)
 	cmd := exec.Command("/usr/bin/omogenexec", sandboxArgs...)
-	sandbox := &Sandbox{
-		cmd: cmd,
-	}
 	cmd.Env = []string{
 		"PATH=/bin:/usr/bin",
 	}
 
+	sandbox := &Sandbox{
+		cmd: cmd,
+	}
 	inPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil
 	}
 	sandbox.sandboxIn = inPipe
-
 	outPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil
 	}
 	sandbox.sandboxOut = bufio.NewScanner(outPipe)
 	sandbox.sandboxOut.Split(bufio.ScanWords)
-
 	cmd.Stderr = &sandbox.sandboxErr
 	return sandbox
 }
 
-func (s *Sandbox) Start() error {
+func (s *Sandbox) start() error {
 	return s.cmd.Start()
 }
 
-func (s *Sandbox) Run(cmd string, args []string) (ExecResult, error) {
-	fields := 1 + len(args)
+func (s *Sandbox) Run(cmdAndArgs []string) (*ExecResult, error) {
+	// Binary format is [#of commands + args] command [0x0] arg [0x0] arg ... [0x0]
+	fields := len(cmdAndArgs)
 	if fields > 255 {
-		logger.Fatal("Too many args to sandbox (%v)", args)
+		logger.Fatal("Too many args to Sandbox (%v)", cmdAndArgs)
+	}
+	if fields == 0 {
+		logger.Fatal("Too few args to Sandbox (%v)", cmdAndArgs)
 	}
 	msg := []byte{byte(fields)}
-	msg = append(msg, []byte(cmd)...)
-	msg = append(msg, 0x0)
-	for _, arg := range args {
+	for _, arg := range cmdAndArgs {
 		msg = append(msg, []byte(arg)...)
 		msg = append(msg, 0x0)
 	}
-	// Pipes internally write all the data at once
+	// Pipes internally write all the data at once, so no need for retries here
 	if _, err := s.sandboxIn.Write(msg); err != nil {
-		logger.Fatalf("Failed writing to the sandbox: %v", err)
+		logger.Fatalf("Failed writing to the Sandbox: %v", err)
 	}
-	res := ExecResult{}
+	res := &ExecResult{}
 	for {
 		tok := s.sandboxToken()
 		if tok == "done" {
@@ -121,16 +114,16 @@ func (s *Sandbox) Run(cmd string, args []string) (ExecResult, error) {
 			if killReason == "tle" {
 				res.ExitType = TimedOut
 			} else if killReason == "setup" {
-				return res, fmt.Errorf("sandbox run died during setup")
+				return res, fmt.Errorf("Sandbox Run died during setup")
 			} else {
-				logger.Fatalf("Unrecognized output from sandbox (killed %s)", killReason)
+				logger.Fatalf("Unrecognized output from Sandbox (killed %s)", killReason)
 			}
 		} else if tok == "code" {
 			res.ExitType = Exited
 			codeStr := s.sandboxToken()
 			exitCode, err := strconv.Atoi(codeStr)
 			if err != nil {
-				logger.Fatalf("Unrecognized output from sandbox (code %s)", codeStr)
+				logger.Fatalf("Unrecognized output from Sandbox (code %s)", codeStr)
 			}
 			res.ExitCode = exitCode
 		} else if tok == "signal" {
@@ -138,21 +131,21 @@ func (s *Sandbox) Run(cmd string, args []string) (ExecResult, error) {
 			signalStr := s.sandboxToken()
 			signal, err := strconv.Atoi(signalStr)
 			if err != nil {
-				logger.Fatalf("Unrecognized output from sandbox (signal %s)", signalStr)
+				logger.Fatalf("Unrecognized output from Sandbox (signal %s)", signalStr)
 			}
 			res.Signal = signal
 		} else if tok == "mem" {
 			memStr := s.sandboxToken()
 			mem, err := strconv.Atoi(memStr)
 			if err != nil {
-				logger.Fatalf("Unrecognized output from sandbox (mem %s)", memStr)
+				logger.Fatalf("Unrecognized output from Sandbox (mem %s)", memStr)
 			}
 			res.MemoryUsageKb = mem / 1000
 		} else if tok == "cpu" {
 			cpuStr := s.sandboxToken()
 			cpu, err := strconv.Atoi(cpuStr)
 			if err != nil {
-				logger.Fatalf("Unrecognized output from sandbox (cpu %s)", cpuStr)
+				logger.Fatalf("Unrecognized output from Sandbox (cpu %s)", cpuStr)
 			}
 			res.TimeUsageMs = cpu
 		}
@@ -162,13 +155,13 @@ func (s *Sandbox) Run(cmd string, args []string) (ExecResult, error) {
 
 func (s *Sandbox) sandboxToken() string {
 	if !s.sandboxOut.Scan() {
-		s.Finish()
-		logger.Fatalf("Failed reading to the sandbox: %v", s.sandboxErr.String())
+		s.finish()
+		logger.Fatalf("Failed reading to the Sandbox: %v", s.sandboxErr.String())
 	}
 	return s.sandboxOut.Text()
 }
 
-func (s *Sandbox) Finish() {
+func (s *Sandbox) finish() {
 	if !s.waited {
 		s.waited = true
 		if err := s.sandboxIn.Close(); err != nil {
@@ -178,7 +171,7 @@ func (s *Sandbox) Finish() {
 	}
 }
 
-func (s *Sandbox) Logs() string {
+func (s *Sandbox) logs() string {
 	return s.sandboxErr.String()
 }
 

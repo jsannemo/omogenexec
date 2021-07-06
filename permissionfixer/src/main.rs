@@ -18,7 +18,7 @@ struct Opt {
 
 fn main() {
     let opt = Opt::parse();
-    let path = canonicalize(format!("{}{}", OMOGEN_PATH, opt.path)).unwrap();
+    let path = canonicalize(opt.path).unwrap();
     if !path.starts_with(OMOGEN_PATH) {
         panic!("Can only take ownership of files under /var/lib/omogen/")
     }

@@ -27,7 +27,7 @@ func init() {
 type language struct {
 	// This is suitable for inclusion in URLs, and can be displayed externally.
 	Info    *apipb.Language
-	Compile compileFunc
+	Compile CompileFunc
 }
 
 // GetLanguages returns all installed languages, mapped from language ID to the language itself.
@@ -53,7 +53,7 @@ func initPython(executable string) (*language, error) {
 			CompilationDescription: nil,
 			RunDescription:         fmt.Sprintf("%s {files}", executable),
 		},
-		Compile: noCompile(fmt.Sprintf("%s {files}", executable), func(s string) bool {
+		Compile: NoCompile([]string{executable, "{files}", executable}, func(s string) bool {
 			return filepath.Ext(s) == ".py"
 		}),
 	}, nil
@@ -79,6 +79,6 @@ func initGpp() (*language, error) {
 			CompilationDescription: []string{fmt.Sprintf("g++ %s", gppFlags)},
 			RunDescription:         "./a.out",
 		},
-		Compile: cppCompile(realPath),
+		Compile: CppCompile(realPath),
 	}, nil
 }
