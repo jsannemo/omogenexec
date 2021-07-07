@@ -68,7 +68,6 @@ func Diff(reference, output io.Reader, args DiffArgs) (*DiffResult, error) {
 }
 
 func matchToken(ref, out string, args DiffArgs) (bool, string) {
-	logger.Infof("Diff %s %s", ref, out)
 	if args.ParseFloats {
 		var refFloat, outFloat float64
 		strVal := ""
@@ -76,9 +75,7 @@ func matchToken(ref, out string, args DiffArgs) (bool, string) {
 			if scanned, _ := fmt.Sscanf(out, "%f%s", &outFloat, &strVal); scanned != 1 {
 				return false, fmt.Sprintf("Reference was decimal, output was: %s", out)
 			}
-			logger.Infof("got decimals %f %f", refFloat, outFloat)
 			diff := math.Abs(refFloat - outFloat)
-			logger.Infof("float Diff %f", diff)
 			if !(diff <= args.AbsolutePrec) &&
 				!(diff <= args.RelativePrec*math.Abs(refFloat)) {
 				return false, fmt.Sprintf(
@@ -89,7 +86,6 @@ func matchToken(ref, out string, args DiffArgs) (bool, string) {
 		}
 	}
 	diff := !strings.EqualFold(ref, out)
-	logger.Infof("Diff w/o case? %v", diff)
 	if diff {
 		return false, fmt.Sprintf("Output was %s, expected %s", out, ref)
 	}

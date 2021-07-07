@@ -72,9 +72,10 @@ func (e *Evaluator) Evaluate() error {
 	if err := e.programSandbox.start(); err != nil {
 		return fmt.Errorf("failed starting sandbox: %v", err)
 	}
+	defer e.programSandbox.Finish()
 	if e.plan.Validator != nil {
 		e.evalSandbox = newSandbox(1, sandboxArgs{
-			WorkingDirectory: e.plan.Program.ProgramRoot,
+			WorkingDirectory: e.plan.Validator.ProgramRoot,
 			InputPath:        e.valLinker.PathFor("team_output", false),
 			OutputPath:       e.valLinker.PathFor("output", true),
 			ErrorPath:        e.valLinker.PathFor("error", true),
@@ -89,6 +90,10 @@ func (e *Evaluator) Evaluate() error {
 			TimeLimitMs:   60000,
 			MemoryLimitKb: 1000 * 1000,
 		})
+		if err := e.evalSandbox.start(); err != nil {
+			return fmt.Errorf("failed starting sandbox: %v", err)
+		}
+		defer e.evalSandbox.Finish()
 	}
 	_, err := e.evaluateGroup(e.plan.RootGroup, outPath)
 	return err
@@ -242,6 +247,11 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, validatorFlags []string, ou
 	if err := e.linker.clear(); err != nil {
 		return nil, err
 	}
+	if e.valLinker != nil {
+		if err := e.valLinker.clear(); err != nil {
+			return nil, err
+		}
+	}
 	e.resultChan <- res
 	return res, nil
 }
@@ -282,14 +292,11 @@ func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath 
 	if err := e.valLinker.LinkFile(anspath, "judge_answer", false); err != nil {
 		return false, err
 	}
-	if err := e.valLinker.LinkFile(anspath, "judge_answer", false); err != nil {
-		return false, err
-	}
 
 	exit, err := e.evalSandbox.Run(append(e.plan.Validator.RunCommand, append([]string{
 		e.valLinker.PathFor("input", false),
 		e.valLinker.PathFor("judge_answer", false),
-		e.valLinker.PathFor("feedback_dir", true),
+		e.valLinker.PathFor(".", true),
 	}, groupFlags...)...))
 	if err != nil {
 		return false, err

@@ -72,7 +72,7 @@ func CppCompile(gppPath string) CompileFunc {
 			return nil, err
 		}
 		run, err := sandbox.Run(append([]string{gppPath}, substituteArgs(gppFlags, filteredPaths)...))
-		sandbox.finish()
+		sandbox.Finish()
 		if err != nil {
 			return nil, fmt.Errorf("Sandbox failed: %v, %v", err, sandbox.sandboxErr.String())
 		}
@@ -95,7 +95,7 @@ func CppCompile(gppPath string) CompileFunc {
 
 func isCppFile(path string) bool {
 	ext := filepath.Ext(path)
-	return ext == ".cc" || ext == ".cpp" || ext == ".h"
+	return ext == ".cc" || ext == ".cpp"
 }
 
 func sandboxForCompile(sourcePath string) sandboxArgs {
@@ -104,7 +104,7 @@ func sandboxForCompile(sourcePath string) sandboxArgs {
 		InputPath:        "",
 		OutputPath:       "",
 		ErrorPath:        path.Join(sourcePath, "__compiler_errors"),
-		ExtraReadPaths:   nil,
+		ExtraReadPaths:   []string{"/usr/include"},
 		ExtraWritePaths:  []string{sourcePath},
 		TimeLimitMs:      60 * 1000,
 		MemoryLimitKb:    1000 * 1000,
