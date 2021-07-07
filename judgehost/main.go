@@ -91,12 +91,7 @@ return false;
 
 int64 ans = read_solution(judge_ans, judge_error);
 int64 out = read_solution(author_out, wrong_answer);
-
-if (ans != out) {
-wrong_answer("judge answer = %d but submission output = %d\n",
-ans, out);
-}
-
+accept_with_score(abs(ans - out));
 return true;
 }
 
@@ -240,7 +235,7 @@ for line in sys.stdin:
     ab = line.split()
     a = int(ab[0])
     b = int(ab[1])
-    print(abs(a-b))
+    print(abs(a-b) + 1)
 `)},
 		},
 		Language: apipb.LanguageGroup_PYTHON_3,
@@ -269,6 +264,7 @@ for line in sys.stdin:
 	evaluator, err := NewEvaluator("/var/lib/omogen/submissions/13123123", &apipb.EvaluationPlan{
 		Program:   res.Program,
 		Validator: validator.Program,
+		ScoringValidator: true,
 		RootGroup: &apipb.TestGroup{
 			Cases: []*apipb.TestCase{
 				{
@@ -284,9 +280,10 @@ for line in sys.stdin:
 			},
 			Groups:               nil,
 			Name:                 "",
-			Score:                0,
+			AcceptScore:          0,
+			RejectScore:          0,
 			OutputValidatorFlags: nil,
-			BreakOnFail:          true,
+			BreakOnFail:          false,
 			ScoringMode:          0,
 			VerdictMode:          apipb.VerdictMode_FIRST_ERROR,
 			AcceptIfAnyAccepted:  false,

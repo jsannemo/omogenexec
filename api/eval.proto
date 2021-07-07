@@ -25,10 +25,15 @@ enum EvaluationType {
 message EvaluationPlan {
   EvaluationType plan_type = 1;
   TestGroup root_group = 2;
+
   CompiledProgram program = 3;
-  CompiledProgram validator = 4;
   int32 time_limit_ms = 5;
   int32 mem_limit_kb = 6;
+
+  CompiledProgram validator = 4;
+  int32 validator_time_limit_ms = 7;
+  int32 validator_mem_limit_kb = 8;
+  bool scoring_validator = 9;
 }
 
 enum ScoringMode {
@@ -50,12 +55,13 @@ message TestGroup {
   repeated TestCase cases = 1;
   repeated TestGroup groups = 2;
   string name = 3;
-  double score = 4;
-  repeated string output_validator_flags = 5;
-  bool break_on_fail = 6;
-  ScoringMode scoring_mode = 7;
-  VerdictMode verdict_mode = 8;
-  bool accept_if_any_accepted = 9;
+  double accept_score = 4;
+  double reject_score = 5;
+  repeated string output_validator_flags = 6;
+  bool break_on_fail = 7;
+  ScoringMode scoring_mode = 8;
+  VerdictMode verdict_mode = 9;
+  bool accept_if_any_accepted = 10;
 }
 
 message TestCase {
@@ -83,4 +89,5 @@ message Result {
   Verdict verdict = 2;
   double score = 3;
   int32 time_usage_ms = 4;
+  string message = 5;
 }

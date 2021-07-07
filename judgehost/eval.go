@@ -194,7 +194,7 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup, outPath string) (*apipb.R
 			res = append(res, subres)
 		} else {
 			var err error
-			subres, err = e.evaluateCase(eval.TestCase, tg.OutputValidatorFlags, outPath)
+			subres, err = e.evaluateCase(eval.TestCase, tg, outPath)
 			if err != nil {
 				return nil, err
 			}
@@ -209,7 +209,7 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup, outPath string) (*apipb.R
 	return groupRes, nil
 }
 
-func (e *Evaluator) evaluateCase(tc *apipb.TestCase, validatorFlags []string, outPath string) (*apipb.Result, error) {
+func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup, outPath string) (*apipb.Result, error) {
 	// TODO: implement evaluation cache
 	res := &apipb.Result{
 		Type: apipb.ResultType_TEST_CASE,
@@ -224,23 +224,33 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, validatorFlags []string, ou
 	} else if exit.TimedOut() {
 		res.Verdict = apipb.Verdict_TIME_LIMIT_EXCEEDED
 	} else {
-		wa := false
+		ac := false
 		if e.evalSandbox != nil {
-			wa, err = e.runValidator(validatorFlags, tc.InputPath, outPath, tc.OutputPath)
+			valOutput, err := e.runValidator(tg.OutputValidatorFlags, tc.InputPath, outPath, tc.OutputPath)
 			if err != nil {
 				return res, err
 			}
+			ac = valOutput.Accepted
+			res.Score = valOutput.Score
+			res.Message = valOutput.JudgeMessage
 		} else {
-			diff, err := diffOutput(tc.OutputPath, outPath, validatorFlags)
+			diff, err := diffOutput(tc.OutputPath, outPath, tg.OutputValidatorFlags)
 			if err != nil {
 				return res, err
 			}
-			wa = !diff.Match
+			ac = diff.Match
+			res.Message = diff.Description
 		}
-		if wa {
-			res.Verdict = apipb.Verdict_WRONG_ANSWER
-		} else {
+		if ac {
 			res.Verdict = apipb.Verdict_ACCEPTED
+			if !e.plan.ScoringValidator {
+				res.Score = tg.AcceptScore
+			}
+		} else {
+			res.Verdict = apipb.Verdict_WRONG_ANSWER
+			if !e.plan.ScoringValidator {
+				res.Score = tg.RejectScore
+			}
 		}
 	}
 	res.TimeUsageMs = int32(exit.TimeUsageMs)
@@ -282,15 +292,27 @@ func (e *Evaluator) runSubmission(tcPath, inputPath string) (*ExecResult, error)
 	return e.programSandbox.Run(e.plan.Program.RunCommand)
 }
 
-func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath string) (bool, error) {
+type ValidatorOutput struct {
+	Accepted     bool
+	Score        float64
+	JudgeMessage string
+}
+
+const (
+	judgeMessageFile = "judgemessage.txt"
+	scoreFile = "score.txt"
+)
+
+func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath string) (*ValidatorOutput, error) {
+	output := &ValidatorOutput{}
 	if err := e.valLinker.LinkFile(inpath, "input", false); err != nil {
-		return false, err
+		return nil, err
 	}
 	if err := e.valLinker.LinkFile(teampath, "team_output", false); err != nil {
-		return false, err
+		return nil, err
 	}
 	if err := e.valLinker.LinkFile(anspath, "judge_answer", false); err != nil {
-		return false, err
+		return nil, err
 	}
 
 	exit, err := e.evalSandbox.Run(append(e.plan.Validator.RunCommand, append([]string{
@@ -299,31 +321,47 @@ func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath 
 		e.valLinker.PathFor(".", true),
 	}, groupFlags...)...))
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if err := e.resetPermissions(); err != nil {
-		return false, err
+		return nil, err
 	}
 
 	if exit.TimedOut() {
-		return false, fmt.Errorf("output validator timed out")
+		return nil, fmt.Errorf("output validator timed out")
 	}
 	if exit.CrashedWith(42) {
-		return false, nil
+		output.Accepted = true
+	} else if exit.CrashedWith(43) {
+		output.Accepted = false
+	} else {
+		// Crash was abnormal
+		dat, err := ioutil.ReadFile(e.valLinker.PathFor("error", true))
+		if err != nil {
+			return nil, fmt.Errorf("could not read crashed output validator errors: %v", err)
+		}
+		dat2, err := ioutil.ReadFile(e.valLinker.PathFor("output", true))
+		if err != nil {
+			return nil, fmt.Errorf("could not read crashed output validator output: %v", err)
+		}
+		return nil, fmt.Errorf("output validator crashed: %v", string(dat)+" "+string(dat2))
 	}
-	if exit.CrashedWith(43) {
-		return true, nil
+	judgeMessage, err := ioutil.ReadFile(e.valLinker.PathFor(judgeMessageFile, true))
+	if err == nil {
+		output.JudgeMessage = string(judgeMessage)
 	}
-	// Crash was abnormal
-	dat, err := ioutil.ReadFile(e.valLinker.PathFor("error", true))
-	if err != nil {
-		return false, fmt.Errorf("could not read output validator errors: %v", err)
+	if e.plan.ScoringValidator {
+		scoreStr, err := ioutil.ReadFile(e.valLinker.PathFor(scoreFile, true))
+		if err != nil {
+			return nil, fmt.Errorf("could not read score from scoring validator %v", err)
+		}
+		score, err := strconv.ParseFloat(string(scoreStr), 64)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse score %s from scoring validator %v", string(scoreStr), err)
+		}
+		output.Score = score
 	}
-	dat2, err := ioutil.ReadFile(e.valLinker.PathFor("output", true))
-	if err != nil {
-		return false, fmt.Errorf("could not read output validator output: %v", err)
-	}
-	return false, fmt.Errorf("output validator Crashed: %v", string(dat)+" "+string(dat2))
+	return output, nil
 }
 
 func diffOutput(refPath, outPath string, args []string) (*DiffResult, error) {
