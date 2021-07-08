@@ -51,65 +51,97 @@ func Register(grpcServer *grpc.Server) error {
 // Copyright (c) 2010-2019 Kattis and all respective contributors
 // License: https://github.com/Kattis/problemtools/blob/7f8a37902986558cf4a55211c60f1836ee3c2859/LICENSE
 const validatorCc = `
-/* Output validator for "A Different Problem".  This validator is only
- * provided as an example: the problem is so simple that it does not
- * need a custom output validator and it would be more appropriate to
- * use the default token-based diff validator.
- *
- * Note: if you start writing error messages in, say, Swedish, make
- * sure your file is UTF-8 coded.
- */
+#include <utility>
+#include <string>
+#include <cassert>
+#include <cstring>
+#include <cmath>
 #include "validate.h"
 
 using namespace std;
-typedef long long int64;
 
+void check_case() {
+    string line;
+    /* Get test mode description from judge input file */
+    assert(getline(judge_in, line));
 
-bool read_input(istream &in) {
-// we don't need the input to check the output for this problem,
-// so we just discard it.
-int64 a, b;
-if (!(in >> a >> b))
-return false;
-return true;
+    int value = -1;
+    if (sscanf(line.c_str(), "fixed %d", &value) != 1) {
+        if (sscanf(line.c_str(), "random %d", &value) == 1) {
+            srandom(value);
+            value = 1 + random() % 1000;
+        } else if (sscanf(line.c_str(), "adaptive %d", &value) == 1) {
+            srandom(value);
+            value = -1;
+        } else {
+            assert(!"unknown input instructions");
+        }
+    }
+    if (value == -1) {
+        judge_message("I'm not committing to a value, will adaptively choose worst one\n");
+    } else {
+        judge_message("I'm thinking of %d\n", value);
+    }
+
+    int sol_lo = 1, sol_hi = 1000;
+    int guesses = 0;
+    for (int guesses = 0; guesses < 10; ++guesses) {
+        int guess;
+        if (!(author_out >> guess)) {
+            wrong_answer("Guess %d: couldn't read an integer\n", guesses+1);
+        }
+        if (guess < 1 || guess > 1000) {
+            wrong_answer("Guess %d is out of range: %d\n", guesses+1, guess);
+        }
+        judge_message("Guess %d is %d\n", guesses+1, guess);
+        int diff;
+        if (value == -1) {
+            if (guess == sol_lo && sol_lo == sol_hi) {
+                diff = 0;
+            } else if (guess-1 - sol_lo > sol_hi - (guess+1)) {
+                diff = -1;
+            } else if (guess-1 - sol_lo < sol_hi - (guess+1)) {
+                diff = 1;
+            } else {
+                diff = 2*(random() %2) - 1;
+            }
+        } else {
+            diff = value - guess;
+        }
+        if (!diff) {
+            cout << "correct\n";
+            cout.flush();
+            return;
+        } else if (diff < 0) {
+            cout << "lower\n";
+            cout.flush();
+            // Update the maximum possible hidden value.
+            sol_hi = min(sol_hi, guess-1);
+        } else {
+            cout << "higher\n";
+            cout.flush();
+            // Update the minimum possible hidden value.
+            sol_lo = max(sol_lo, guess+1);
+        }
+    }
+    wrong_answer("Didn't get to correct answer in 10 guesses\n");
+
+    return;
 }
-
-
-int read_solution(istream &sol, feedback_function feedback) {
-// read a solution from "sol" (can be either judge answer or
-// submission output), check its feasibility etc and return some
-// representation of it
-
-int64 outval;
-if (!(sol >> outval)) {
-feedback("EOF or next token is not an integer");
-}
-return outval;
-}
-
-bool check_case() {
-if (!read_input(judge_in))
-return false;
-
-int64 ans = read_solution(judge_ans, judge_error);
-int64 out = read_solution(author_out, wrong_answer);
-accept_with_score(abs(ans - out));
-return true;
-}
-
 
 int main(int argc, char **argv) {
-init_io(argc, argv);
+  init_io(argc, argv);
 
-while (check_case());
+  check_case();
 
-/* Check for trailing output. */
-string trash;
-if (author_out >> trash) {
-wrong_answer("Trailing output");
-}
+  /* Check for trailing output. */
+  string trash;
+  if (author_out >> trash) {
+      wrong_answer("Trailing output\n");
+  }
 
-accept();
+  /* Yay! */
+  accept();
 }
 `
 
@@ -229,9 +261,23 @@ void init_io(int argc, char **argv) {
 func main() {
 	res, err := eval.Compile(&apipb.Program{
 		Sources: []*apipb.SourceFile{
-			{Path: "hello.cpp", Contents: []byte(`#include<iostream>
-using namespace std;
-int main() {
+			{Path: "hello.cpp", Contents: []byte(`
+#include <cstdio>
+#include <cstring>
+
+int main(void) {
+    int lo = 0, hi = 1023;
+    while (true) {
+        int m = (lo+hi)/2;
+        printf("%d\n", m);
+		fflush(stdout);
+        char res[1000];
+        scanf("%s", res);
+        if (!strcmp(res, "correct")) break;
+        if (!strcmp(res, "lower")) hi = m-1;
+        else lo = m+1;
+    }
+    return 0;
 }
 `)},
 		},
@@ -268,13 +314,14 @@ int main() {
 		cases = append(cases, &tc)
 	}
 	evaluator, err := eval.NewEvaluator("/var/lib/omogen/submissions/13123123", &apipb.EvaluationPlan{
+		PlanType: apipb.EvaluationType_INTERACTIVE,
 		Program:     res.Program,
 		TimeLimitMs: 1000,
 		MemLimitKb:  1000 * 1000,
-		// Validator: validator.Program,
+		Validator: validator.Program,
 		ValidatorTimeLimitMs: 60 * 1000,
 		ValidatorMemLimitKb:  1000 * 1000,
-		ScoringValidator:     true,
+		ScoringValidator:     false,
 		RootGroup: &apipb.TestGroup{
 			Cases:                cases,
 			Groups:               nil,

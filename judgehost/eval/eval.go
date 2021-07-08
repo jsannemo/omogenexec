@@ -13,6 +13,12 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"syscall"
+)
+
+const (
+	exitCodeAc = 42
+	exitCodeWa = 43
 )
 
 type Evaluator struct {
@@ -87,6 +93,10 @@ func (e *Evaluator) initValidator() error {
 		},
 		TimeLimitMs:   int(e.plan.ValidatorTimeLimitMs),
 		MemoryLimitKb: int(e.plan.ValidatorMemLimitKb),
+	}
+	if e.plan.PlanType == apipb.EvaluationType_INTERACTIVE {
+		args.OutputPath = e.linker.PathFor("input", false)
+		args.InputPath = e.linker.PathFor("output", true)
 	}
 	e.evalSandbox = newSandbox(1, args)
 	return nil
@@ -229,11 +239,9 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup) (*apipb.Result, error) {
 	return groupRes, nil
 }
 
-func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup, outPath string) (*apipb.Result, error) {
+func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup) (*apipb.Result, error) {
 	programInput := e.linker.PathFor("input", false)
 	programOutput := e.linker.PathFor("output", true)
-	validatorInput := e.valLinker.PathFor("team_output", false)
-	validatorOutput := e.valLinker.PathFor("output", true)
 	if err := e.valLinker.LinkFile(tc.InputPath, "input", false); err != nil {
 		return nil, err
 	}
@@ -241,16 +249,31 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup,
 		return nil, err
 	}
 
-	interactor := exec.Command("/usr/bin/omogenexec-interactive", []string{programInput, programOutput, validatorInput, validatorOutput}...)
+	if err := syscall.Mkfifo(programInput, 0660); err != nil {
+		return nil, fmt.Errorf("failed making interactive pipe: %v", err)
+	}
+	if err := syscall.Mkfifo(programOutput, 0660); err != nil {
+		return nil, fmt.Errorf("failed making interactive pipe: %v", err)
+	}
+	if err := os.Chmod(programInput, 0660); err != nil {
+		return nil, fmt.Errorf("failed chmod on interactive pipe: %v", err)
+	}
+	if err := os.Chmod(programOutput, 0660); err != nil {
+		return nil, fmt.Errorf("failed chmod on interactive pipe: %v", err)
+	}
+	inWrite, err := os.OpenFile(programInput, os.O_CREATE|os.O_RDWR|os.O_APPEND, os.ModeNamedPipe)
+	inRead, err := os.OpenFile(programInput, os.O_CREATE, os.ModeNamedPipe)
+	outWrite, err := os.OpenFile(programOutput, os.O_CREATE|os.O_RDWR|os.O_APPEND, os.ModeNamedPipe)
+	outRead, err := os.OpenFile(programOutput, os.O_CREATE, os.ModeNamedPipe)
+
 	var programRun, validatorRun *execResult
 	var programErr, validatorErr error
+	var validatorFirst bool
 	wg := sync.WaitGroup{}
 	wg.Add(2)
-	if err := interactor.Start(); err != nil {
-		return nil, err
-	}
 	go func() {
 		programRun, programErr = e.programSandbox.Run(e.plan.Program.RunCommand)
+		outWrite.Close()
 		wg.Done()
 	}()
 	go func() {
@@ -259,24 +282,56 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup,
 			e.valLinker.PathFor("judge_answer", false),
 			e.valLinker.PathFor(".", true),
 		}, tg.OutputValidatorFlags...)...))
+		inWrite.Close()
+		if programRun == nil {
+			 validatorFirst = true
+			if !validatorRun.CrashedWith(exitCodeAc) {
+				 outRead.Close()
+			 }
+		}
 		wg.Done()
 	}()
 	wg.Wait()
-	if err := interactor.Wait(); err != nil {
-		return nil, err
-	}
-
+	inRead.Close()
+	outRead.Close()
 	if err := e.linker.Clear(); err != nil {
 		return nil, err
 	}
 	if err := e.valLinker.Clear(); err != nil {
 		return nil, err
 	}
+
+	val, err := e.validatorOutputFromExit(validatorRun)
+	if err != nil {
+		return nil, err
+	}
 	res := &apipb.Result{}
+	if programRun.TimedOut() {
+		res.Verdict = apipb.Verdict_TIME_LIMIT_EXCEEDED
+	} else if programRun.Crashed() && programRun.Signal != int(syscall.SIGPIPE) && (!validatorFirst || val.Accepted) {
+		res.Verdict = apipb.Verdict_RUN_TIME_ERROR
+	} else {
+		res.Score = val.Score
+		res.Message = val.JudgeMessage
+		if val.Accepted {
+			res.Verdict = apipb.Verdict_ACCEPTED
+			if !e.plan.ScoringValidator {
+				res.Score = tg.AcceptScore
+			}
+		} else {
+			res.Verdict = apipb.Verdict_WRONG_ANSWER
+			if !e.plan.ScoringValidator {
+				res.Score = tg.RejectScore
+			}
+		}
+	}
 	return res, nil
 }
 
 func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apipb.Result, error) {
+	if e.plan.PlanType == apipb.EvaluationType_INTERACTIVE {
+		return e.evaluateInteractive(tc, tg)
+	}
 	outPath := e.linker.PathFor("output", true)
 	// TODO: implement evaluation cache
 	res := &apipb.Result{
@@ -371,7 +426,6 @@ const (
 )
 
 func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath string) (*ValidatorOutput, error) {
-	output := &ValidatorOutput{}
 	if err := e.valLinker.LinkFile(inpath, "input", false); err != nil {
 		return nil, err
 	}
@@ -390,16 +444,17 @@ func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath 
 	if err != nil {
 		return nil, err
 	}
-	if err := e.resetPermissions(); err != nil {
-		return nil, err
-	}
+	return e.validatorOutputFromExit(exit)
+}
 
+func (e *Evaluator) validatorOutputFromExit(exit *execResult) (*ValidatorOutput, error) {
+	output := &ValidatorOutput{}
 	if exit.TimedOut() {
 		return nil, fmt.Errorf("output validator timed out")
 	}
-	if exit.CrashedWith(42) {
+	if exit.CrashedWith(exitCodeAc) {
 		output.Accepted = true
-	} else if exit.CrashedWith(43) {
+	} else if exit.CrashedWith(exitCodeWa) {
 		output.Accepted = false
 	} else {
 		// Crash was abnormal
@@ -417,7 +472,7 @@ func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath 
 	if err == nil {
 		output.JudgeMessage = string(judgeMessage)
 	}
-	if e.plan.ScoringValidator {
+	if e.plan.ScoringValidator && output.Accepted {
 		scoreStr, err := ioutil.ReadFile(e.valLinker.PathFor(scoreFile, true))
 		if err != nil {
 			return nil, fmt.Errorf("could not read score from scoring validator %v", err)
