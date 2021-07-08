@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"bufio"
@@ -22,7 +22,7 @@ type sandboxArgs struct {
 	MemoryLimitKb    int
 }
 
-type Sandbox struct {
+type sandboxWrapper struct {
 	cmd        *exec.Cmd
 	sandboxIn  io.WriteCloser
 	sandboxOut *bufio.Scanner
@@ -30,7 +30,7 @@ type Sandbox struct {
 	waited     bool
 }
 
-func newSandbox(id int, args sandboxArgs) *Sandbox {
+func newSandbox(id int, args sandboxArgs) *sandboxWrapper {
 	sandboxArgs := []string{
 		"--sandbox-id", strconv.Itoa(id),
 		"--time-lim-ms", strconv.Itoa(args.TimeLimitMs),
@@ -58,13 +58,13 @@ func newSandbox(id int, args sandboxArgs) *Sandbox {
 		writePaths = append(writePaths, filepath.Dir(args.ErrorPath))
 	}
 	sandboxArgs = append(sandboxArgs, mountArgs(readPaths, writePaths)...)
-	logger.Infof("Sandbox %d running with args %v", id, sandboxArgs)
+	logger.Infof("sandboxWrapper %d running with args %v", id, sandboxArgs)
 	cmd := exec.Command("/usr/bin/omogenexec", sandboxArgs...)
 	cmd.Env = []string{
 		"PATH=/bin:/usr/bin",
 	}
 
-	sandbox := &Sandbox{
+	sandbox := &sandboxWrapper{
 		cmd: cmd,
 	}
 	inPipe, err := cmd.StdinPipe()
@@ -82,11 +82,11 @@ func newSandbox(id int, args sandboxArgs) *Sandbox {
 	return sandbox
 }
 
-func (s *Sandbox) start() error {
+func (s *sandboxWrapper) Start() error {
 	return s.cmd.Start()
 }
 
-func (s *Sandbox) Run(cmdAndArgs []string) (*ExecResult, error) {
+func (s *sandboxWrapper) Run(cmdAndArgs []string) (*execResult, error) {
 	// Binary format is [#of commands + args] command [0x0] arg [0x0] arg ... [0x0]
 	fields := len(cmdAndArgs)
 	if fields > 255 {
@@ -102,9 +102,9 @@ func (s *Sandbox) Run(cmdAndArgs []string) (*ExecResult, error) {
 	}
 	// Pipes internally write all the data at once, so no need for retries here
 	if _, err := s.sandboxIn.Write(msg); err != nil {
-		logger.Fatalf("Failed writing to the sandbox: %v", err)
+		logger.Infof("Failed writing to the sandbox: %v", err)
 	}
-	res := &ExecResult{}
+	res := &execResult{}
 	for {
 		tok := s.sandboxToken()
 		if tok == "done" {
@@ -112,14 +112,14 @@ func (s *Sandbox) Run(cmdAndArgs []string) (*ExecResult, error) {
 		} else if tok == "killed" {
 			killReason := s.sandboxToken()
 			if killReason == "tle" {
-				res.ExitType = TimedOut
+				res.ExitType = timedOut
 			} else if killReason == "setup" {
 				return res, fmt.Errorf("sandbox Run died during setup")
 			} else {
 				logger.Fatalf("Unrecognized output from sandbox (killed %s)", killReason)
 			}
 		} else if tok == "code" {
-			res.ExitType = Exited
+			res.ExitType = exited
 			codeStr := s.sandboxToken()
 			exitCode, err := strconv.Atoi(codeStr)
 			if err != nil {
@@ -127,7 +127,7 @@ func (s *Sandbox) Run(cmdAndArgs []string) (*ExecResult, error) {
 			}
 			res.ExitCode = exitCode
 		} else if tok == "signal" {
-			res.ExitType = Signaled
+			res.ExitType = signaled
 			signalStr := s.sandboxToken()
 			signal, err := strconv.Atoi(signalStr)
 			if err != nil {
@@ -153,7 +153,7 @@ func (s *Sandbox) Run(cmdAndArgs []string) (*ExecResult, error) {
 	return res, nil
 }
 
-func (s *Sandbox) sandboxToken() string {
+func (s *sandboxWrapper) sandboxToken() string {
 	if !s.sandboxOut.Scan() {
 		s.Finish()
 		logger.Fatalf("Failed reading to the sandbox: %v", s.sandboxErr.String())
@@ -161,7 +161,7 @@ func (s *Sandbox) sandboxToken() string {
 	return s.sandboxOut.Text()
 }
 
-func (s *Sandbox) Finish() {
+func (s *sandboxWrapper) Finish() {
 	if !s.waited {
 		s.waited = true
 		if err := s.sandboxIn.Close(); err != nil {
@@ -171,7 +171,7 @@ func (s *Sandbox) Finish() {
 	}
 }
 
-func (s *Sandbox) logs() string {
+func (s *sandboxWrapper) logs() string {
 	return s.sandboxErr.String()
 }
 

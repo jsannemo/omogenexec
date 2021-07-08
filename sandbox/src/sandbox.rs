@@ -182,6 +182,7 @@ pub fn sandbox_main(ctx: Context) -> isize {
                     println!("done");
                     continue;
                 }
+                let mut sleep = 5;
                 loop {
                     let maybe_exit = wait_for_nohang(child).unwrap();
                     match maybe_exit {
@@ -196,7 +197,8 @@ pub fn sandbox_main(ctx: Context) -> isize {
                                 println!("killed tle");
                                 break;
                             }
-                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            std::thread::sleep(std::time::Duration::from_millis(sleep));
+                            sleep = if 2 * sleep > 100 { 100 } else { sleep * 2 }
                         }
                         Some(exit) => {
                             if s == "err" {

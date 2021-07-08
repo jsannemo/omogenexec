@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-var languages = make(map[apipb.LanguageGroup]*language)
+var languages = make(map[apipb.LanguageGroup]*Language)
 
 func init() {
 	pypy, err := initPython("pypy3")
@@ -24,18 +24,17 @@ func init() {
 	languages[gpp.Info.Group] = gpp
 }
 
-type language struct {
-	// This is suitable for inclusion in URLs, and can be displayed externally.
+type Language struct {
 	Info    *apipb.Language
-	Compile CompileFunc
+	compile compileFunc
 }
 
 // GetLanguages returns all installed languages, mapped from language ID to the language itself.
-func GetLanguages() map[apipb.LanguageGroup]*language {
+func GetLanguages() map[apipb.LanguageGroup]*Language {
 	return languages
 }
 
-func initPython(executable string) (*language, error) {
+func initPython(executable string) (*Language, error) {
 	logger.Infof("Checking for Python executable %s", executable)
 	realPath, err := exec.LookPath(executable)
 	if err != nil {
@@ -46,14 +45,14 @@ func initPython(executable string) (*language, error) {
 		return nil, fmt.Errorf("could not retrieve version for python %s: %v", realPath, err)
 	}
 	logger.Infof("Using Python %s %s", realPath, version)
-	return &language{
+	return &Language{
 		Info: &apipb.Language{
 			Group:                  apipb.LanguageGroup_PYTHON_3,
 			Version:                version,
 			CompilationDescription: nil,
 			RunDescription:         fmt.Sprintf("%s {files}", executable),
 		},
-		Compile: NoCompile([]string{executable, "{files}", executable}, func(s string) bool {
+		compile: noCompile([]string{executable, "{files}", executable}, func(s string) bool {
 			return filepath.Ext(s) == ".py"
 		}),
 	}, nil
@@ -61,7 +60,7 @@ func initPython(executable string) (*language, error) {
 
 var gppFlags = []string{"-std=gnu++17", "-static", "-O2", "{files}"}
 
-func initGpp() (*language, error) {
+func initGpp() (*Language, error) {
 	logger.Infof("Checking for g++ executable")
 	realPath, err := exec.LookPath("g++")
 	if err != nil {
@@ -72,13 +71,13 @@ func initGpp() (*language, error) {
 		return nil, fmt.Errorf("could not get g++ version: %v", err)
 	}
 	logger.Infof("Using g++ %s %s", realPath, version)
-	return &language{
+	return &Language{
 		Info: &apipb.Language{
 			Group:                  apipb.LanguageGroup_CPP,
 			Version:                version,
 			CompilationDescription: []string{fmt.Sprintf("g++ %s", gppFlags)},
 			RunDescription:         "./a.out",
 		},
-		Compile: CppCompile(realPath),
+		compile: cppCompile(realPath),
 	}, nil
 }

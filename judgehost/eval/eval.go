@@ -1,7 +1,8 @@
-package main
+package eval
 
 import (
 	"fmt"
+	"github.com/google/logger"
 	apipb "github.com/jsannemo/omogenexec/api"
 	"github.com/jsannemo/omogenexec/util"
 	"io/ioutil"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"sync"
 )
 
 type Evaluator struct {
@@ -19,45 +21,34 @@ type Evaluator struct {
 	valLinker      *fileLinker
 	plan           *apipb.EvaluationPlan
 	evalCache      map[string]*apipb.Result
-	programSandbox *Sandbox
-	evalSandbox    *Sandbox
+	programSandbox *sandboxWrapper
+	evalSandbox    *sandboxWrapper
 	resultChan     chan<- *apipb.Result
 }
 
 func NewEvaluator(root string, plan *apipb.EvaluationPlan, results chan<- *apipb.Result) (*Evaluator, error) {
-	fl, err := NewFileLinker(filepath.Join(root, "env"))
-	if err != nil {
-		return nil, fmt.Errorf("failed creating fileLinker: %v", err)
-	}
 	eval := &Evaluator{
 		root:       root,
-		linker:     fl,
 		plan:       plan,
 		evalCache:  make(map[string]*apipb.Result),
 		resultChan: results,
 	}
-	if plan.Validator != nil {
-		valfl, err := NewFileLinker(filepath.Join(root, "valenv"))
-		if err != nil {
-			return nil, fmt.Errorf("failed creating validator fileLinker: %v", err)
-		}
-		eval.valLinker = valfl
+	if err := eval.initProgram(); err != nil {
+		return nil, err
+	}
+	if err := eval.initValidator(); err != nil {
+		return nil, err
 	}
 	return eval, nil
 }
 
-func (e *Evaluator) resetPermissions() error {
-	cmd := exec.Command("/usr/bin/omogenexec-fixpermissions", "--path", filepath.Dir(e.root))
-	return cmd.Run()
-}
-
-func (e *Evaluator) Evaluate() error {
-	if err := e.resetPermissions(); err != nil {
-		return fmt.Errorf("could not reset permissions: %v", err)
+func (e *Evaluator) initProgram() error {
+	fl, err := newFileLinker(filepath.Join(e.root, "env"))
+	if err != nil {
+		return fmt.Errorf("failed creating fileLinker: %v", err)
 	}
-	defer close(e.resultChan)
-	outPath := e.linker.PathFor("output", true)
-	e.programSandbox = newSandbox(0, sandboxArgs{
+	e.linker = fl
+	args := sandboxArgs{
 		WorkingDirectory: e.plan.Program.ProgramRoot,
 		InputPath:        e.linker.PathFor("input", false),
 		OutputPath:       e.linker.PathFor("output", true),
@@ -68,34 +59,63 @@ func (e *Evaluator) Evaluate() error {
 		ExtraWritePaths: nil,
 		TimeLimitMs:     int(e.plan.TimeLimitMs),
 		MemoryLimitKb:   int(e.plan.MemLimitKb),
-	})
-	if err := e.programSandbox.start(); err != nil {
+	}
+	e.programSandbox = newSandbox(0, args)
+	return nil
+}
+
+func (e *Evaluator) initValidator() error {
+	if e.plan.Validator == nil {
+		return nil
+	}
+	valfl, err := newFileLinker(filepath.Join(e.root, "valenv"))
+	if err != nil {
+		return fmt.Errorf("failed creating validator fileLinker: %v", err)
+	}
+	e.valLinker = valfl
+	args := sandboxArgs{
+		WorkingDirectory: e.plan.Validator.ProgramRoot,
+		InputPath:        e.valLinker.PathFor("team_output", false),
+		OutputPath:       e.valLinker.PathFor("output", true),
+		ErrorPath:        e.valLinker.PathFor("error", true),
+		ExtraReadPaths: []string{
+			e.valLinker.readBase.Path(),
+			e.plan.Validator.ProgramRoot,
+		},
+		ExtraWritePaths: []string{
+			e.valLinker.writeBase.Path(),
+		},
+		TimeLimitMs:   int(e.plan.ValidatorTimeLimitMs),
+		MemoryLimitKb: int(e.plan.ValidatorMemLimitKb),
+	}
+	e.evalSandbox = newSandbox(1, args)
+	return nil
+}
+
+func (e *Evaluator) resetPermissions() error {
+	cmd := exec.Command("/usr/bin/omogenexec-fixpermissions", "--path", filepath.Dir(e.root))
+	return cmd.Run()
+}
+
+func (e *Evaluator) Evaluate() error {
+	logger.Infof("Starting evaluation in %s", e.root)
+	if err := e.resetPermissions(); err != nil {
+		return fmt.Errorf("could not reset permissions: %v", err)
+	}
+	defer e.resetPermissions()
+	defer close(e.resultChan)
+	if err := e.programSandbox.Start(); err != nil {
 		return fmt.Errorf("failed starting sandbox: %v", err)
 	}
 	defer e.programSandbox.Finish()
 	if e.plan.Validator != nil {
-		e.evalSandbox = newSandbox(1, sandboxArgs{
-			WorkingDirectory: e.plan.Validator.ProgramRoot,
-			InputPath:        e.valLinker.PathFor("team_output", false),
-			OutputPath:       e.valLinker.PathFor("output", true),
-			ErrorPath:        e.valLinker.PathFor("error", true),
-			ExtraReadPaths: []string{
-				e.valLinker.readBase.Path(),
-				e.plan.Validator.ProgramRoot,
-			},
-			ExtraWritePaths: []string{
-				e.valLinker.writeBase.Path(),
-			},
-			// TODO: make this configurable
-			TimeLimitMs:   60000,
-			MemoryLimitKb: 1000 * 1000,
-		})
-		if err := e.evalSandbox.start(); err != nil {
+		if err := e.evalSandbox.Start(); err != nil {
 			return fmt.Errorf("failed starting sandbox: %v", err)
 		}
 		defer e.evalSandbox.Finish()
 	}
-	_, err := e.evaluateGroup(e.plan.RootGroup, outPath)
+	_, err := e.evaluateGroup(e.plan.RootGroup)
+	logger.Infof("Completed evaluation of %s", e.root)
 	return err
 }
 
@@ -170,7 +190,7 @@ func mergeRes(res []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
 	return result
 }
 
-func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup, outPath string) (*apipb.Result, error) {
+func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup) (*apipb.Result, error) {
 	var evalables []evalable = nil
 	for _, group := range tg.Groups {
 		evalables = append(evalables, evalable{TestGroup: group})
@@ -187,14 +207,14 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup, outPath string) (*apipb.R
 		var subres *apipb.Result
 		if group := eval.TestGroup; group != nil {
 			var err error
-			subres, err = e.evaluateGroup(group, outPath)
+			subres, err = e.evaluateGroup(group)
 			if err != nil {
 				return nil, err
 			}
 			res = append(res, subres)
 		} else {
 			var err error
-			subres, err = e.evaluateCase(eval.TestCase, tg, outPath)
+			subres, err = e.evaluateCase(eval.TestCase, tg)
 			if err != nil {
 				return nil, err
 			}
@@ -209,7 +229,55 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup, outPath string) (*apipb.R
 	return groupRes, nil
 }
 
-func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup, outPath string) (*apipb.Result, error) {
+func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup, outPath string) (*apipb.Result, error) {
+	programInput := e.linker.PathFor("input", false)
+	programOutput := e.linker.PathFor("output", true)
+	validatorInput := e.valLinker.PathFor("team_output", false)
+	validatorOutput := e.valLinker.PathFor("output", true)
+	if err := e.valLinker.LinkFile(tc.InputPath, "input", false); err != nil {
+		return nil, err
+	}
+	if err := e.valLinker.LinkFile(tc.OutputPath, "judge_answer", false); err != nil {
+		return nil, err
+	}
+
+	interactor := exec.Command("/usr/bin/omogenexec-interactive", []string{programInput, programOutput, validatorInput, validatorOutput}...)
+	var programRun, validatorRun *execResult
+	var programErr, validatorErr error
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	if err := interactor.Start(); err != nil {
+		return nil, err
+	}
+	go func() {
+		programRun, programErr = e.programSandbox.Run(e.plan.Program.RunCommand)
+		wg.Done()
+	}()
+	go func() {
+		validatorRun, validatorErr = e.evalSandbox.Run(append(e.plan.Validator.RunCommand, append([]string{
+			e.valLinker.PathFor("input", false),
+			e.valLinker.PathFor("judge_answer", false),
+			e.valLinker.PathFor(".", true),
+		}, tg.OutputValidatorFlags...)...))
+		wg.Done()
+	}()
+	wg.Wait()
+	if err := interactor.Wait(); err != nil {
+		return nil, err
+	}
+
+	if err := e.linker.Clear(); err != nil {
+		return nil, err
+	}
+	if err := e.valLinker.Clear(); err != nil {
+		return nil, err
+	}
+	res := &apipb.Result{}
+	return res, nil
+}
+
+func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apipb.Result, error) {
+	outPath := e.linker.PathFor("output", true)
 	// TODO: implement evaluation cache
 	res := &apipb.Result{
 		Type: apipb.ResultType_TEST_CASE,
@@ -254,11 +322,11 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup, outPat
 		}
 	}
 	res.TimeUsageMs = int32(exit.TimeUsageMs)
-	if err := e.linker.clear(); err != nil {
+	if err := e.linker.Clear(); err != nil {
 		return nil, err
 	}
 	if e.valLinker != nil {
-		if err := e.valLinker.clear(); err != nil {
+		if err := e.valLinker.Clear(); err != nil {
 			return nil, err
 		}
 	}
@@ -266,7 +334,7 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup, outPat
 	return res, nil
 }
 
-func (e *Evaluator) runSubmission(tcPath, inputPath string) (*ExecResult, error) {
+func (e *Evaluator) runSubmission(tcPath, inputPath string) (*execResult, error) {
 	fb := util.NewFileBase(tcPath)
 	fb.OwnerGid = util.OmogenexecGroupId()
 	fb.GroupWritable = true
@@ -288,7 +356,6 @@ func (e *Evaluator) runSubmission(tcPath, inputPath string) (*ExecResult, error)
 	if err := e.linker.LinkFile(tcPath+"/error", "error", true); err != nil {
 		return nil, err
 	}
-	defer e.resetPermissions()
 	return e.programSandbox.Run(e.plan.Program.RunCommand)
 }
 
@@ -300,7 +367,7 @@ type ValidatorOutput struct {
 
 const (
 	judgeMessageFile = "judgemessage.txt"
-	scoreFile = "score.txt"
+	scoreFile        = "score.txt"
 )
 
 func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath string) (*ValidatorOutput, error) {

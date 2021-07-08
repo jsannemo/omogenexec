@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"fmt"
@@ -15,13 +15,13 @@ type Compilation struct {
 	CompilerErrors string
 }
 
-type CompileFunc func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error)
+type compileFunc func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error)
 
 func Compile(program *apipb.Program, outputPath string) (*Compilation, error) {
 	langs := GetLanguages()
 	lang, found := langs[program.Language]
 	if !found {
-		logger.Fatalf("Could not find submission language %v", program.Language)
+		logger.Fatalf("Could not find submission Language %v", program.Language)
 	}
 	fb := util.NewFileBase(outputPath)
 	fb.GroupWritable = true
@@ -35,12 +35,12 @@ func Compile(program *apipb.Program, outputPath string) (*Compilation, error) {
 			return nil, fmt.Errorf("failed writing %s: %v", file.Path, err)
 		}
 	}
-	return lang.Compile(program, fb)
+	return lang.compile(program, fb)
 }
 
-// NoCompile represents compilation that only copies some of the source files and uses the given
+// noCompile represents compilation that only copies some of the source files and uses the given
 // Run command to execute the program.
-func NoCompile(runCommand []string, include func(string) bool) CompileFunc {
+func noCompile(runCommand []string, include func(string) bool) compileFunc {
 	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
 		var filteredPaths []string
 		for _, file := range program.Sources {
@@ -57,7 +57,7 @@ func NoCompile(runCommand []string, include func(string) bool) CompileFunc {
 	}
 }
 
-func CppCompile(gppPath string) CompileFunc {
+func cppCompile(gppPath string) compileFunc {
 	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
 		var filteredPaths []string
 		for _, file := range program.Sources {
@@ -67,14 +67,14 @@ func CppCompile(gppPath string) CompileFunc {
 		}
 		sandboxArgs := sandboxForCompile(outputBase.Path())
 		sandbox := newSandbox(0, sandboxArgs)
-		err := sandbox.start()
+		err := sandbox.Start()
 		if err != nil {
 			return nil, err
 		}
 		run, err := sandbox.Run(append([]string{gppPath}, substituteArgs(gppFlags, filteredPaths)...))
 		sandbox.Finish()
 		if err != nil {
-			return nil, fmt.Errorf("Sandbox failed: %v, %v", err, sandbox.sandboxErr.String())
+			return nil, fmt.Errorf("sandboxWrapper failed: %v, %v", err, sandbox.sandboxErr.String())
 		}
 		stderr, err := outputBase.ReadFile("__compiler_errors")
 		if err != nil {

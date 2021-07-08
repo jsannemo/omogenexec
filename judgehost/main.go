@@ -5,8 +5,10 @@ import (
 	"flag"
 	"github.com/google/logger"
 	apipb "github.com/jsannemo/omogenexec/api"
+	"github.com/jsannemo/omogenexec/judgehost/eval"
 	"google.golang.org/grpc"
 	"io/ioutil"
+	"strconv"
 	"sync"
 )
 
@@ -225,27 +227,22 @@ void init_io(int argc, char **argv) {
 }`
 
 func main() {
-	res, err := Compile(&apipb.Program{
+	res, err := eval.Compile(&apipb.Program{
 		Sources: []*apipb.SourceFile{
-			{Path: "hello.py", Contents: []byte(`#!/usr/bin/env python3
-
-import sys
-
-for line in sys.stdin:
-    ab = line.split()
-    a = int(ab[0])
-    b = int(ab[1])
-    print(abs(a-b) + 1)
+			{Path: "hello.cpp", Contents: []byte(`#include<iostream>
+using namespace std;
+int main() {
+}
 `)},
 		},
-		Language: apipb.LanguageGroup_PYTHON_3,
+		Language: apipb.LanguageGroup_CPP,
 	}, "/var/lib/omogen/submissions/13123123/compile")
 	if err != nil {
 		logger.Fatalf("err: %v", err)
 	}
 	logger.Infof("res: %v", res)
 
-	validator, err := Compile(&apipb.Program{
+	validator, err := eval.Compile(&apipb.Program{
 		Sources: []*apipb.SourceFile{
 			{Path: "validate.cc", Contents: []byte(validatorCc)},
 			{Path: "validate.h", Contents: []byte(validatorH)},
@@ -260,24 +257,26 @@ for line in sys.stdin:
 	}
 	logger.Infof("res: %v", validator)
 
-	ch := make(chan *apipb.Result)
-	evaluator, err := NewEvaluator("/var/lib/omogen/submissions/13123123", &apipb.EvaluationPlan{
-		Program:   res.Program,
-		Validator: validator.Program,
-		ScoringValidator: true,
+	ch := make(chan *apipb.Result, 100)
+	cases := []*apipb.TestCase{}
+	for i := 0; i < 100; i++ {
+		tc := apipb.TestCase{
+			Name:       strconv.Itoa(i),
+			InputPath:  "/var/lib/omogen/problems/helloworld/data/01.in",
+			OutputPath: "/var/lib/omogen/problems/helloworld/data/01.ans",
+		}
+		cases = append(cases, &tc)
+	}
+	evaluator, err := eval.NewEvaluator("/var/lib/omogen/submissions/13123123", &apipb.EvaluationPlan{
+		Program:     res.Program,
+		TimeLimitMs: 1000,
+		MemLimitKb:  1000 * 1000,
+		// Validator: validator.Program,
+		ValidatorTimeLimitMs: 60 * 1000,
+		ValidatorMemLimitKb:  1000 * 1000,
+		ScoringValidator:     true,
 		RootGroup: &apipb.TestGroup{
-			Cases: []*apipb.TestCase{
-				{
-					Name:       "01",
-					InputPath:  "/var/lib/omogen/problems/helloworld/data/01.in",
-					OutputPath: "/var/lib/omogen/problems/helloworld/data/01.ans",
-				},
-				{
-					Name:       "02",
-					InputPath:  "/var/lib/omogen/problems/helloworld/data/01.in",
-					OutputPath: "/var/lib/omogen/problems/helloworld/data/01.ans",
-				},
-			},
+			Cases:                cases,
 			Groups:               nil,
 			Name:                 "",
 			AcceptScore:          0,
@@ -288,8 +287,6 @@ for line in sys.stdin:
 			VerdictMode:          apipb.VerdictMode_FIRST_ERROR,
 			AcceptIfAnyAccepted:  false,
 		},
-		TimeLimitMs: 1000,
-		MemLimitKb:  1000 * 1000,
 	}, ch)
 	if err != nil {
 		logger.Fatalf("eval setup err: %v", err)

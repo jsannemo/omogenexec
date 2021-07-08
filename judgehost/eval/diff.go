@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"bufio"
@@ -95,26 +95,26 @@ func matchToken(ref, out string, args DiffArgs) (bool, string) {
 	return true, ""
 }
 
-type Position struct {
+type position struct {
 	Line int
 	Col  int
 }
 
-func (p *Position) String() string {
+func (p position) String() string {
 	return fmt.Sprintf("%d:%d", p.Line, p.Col)
 }
 
 type positionedScanner struct {
 	reader         *bufio.Reader
 	spaceSensitive bool
-	pos            Position
+	pos            position
 }
 
 func newPositionedScanner(reader *bufio.Reader, spaceSensitive bool) positionedScanner {
 	return positionedScanner{
 		reader:         reader,
 		spaceSensitive: spaceSensitive,
-		pos: Position{
+		pos: position{
 			Line: 1,
 			Col:  1,
 		},
@@ -122,7 +122,7 @@ func newPositionedScanner(reader *bufio.Reader, spaceSensitive bool) positionedS
 }
 
 type posToken struct {
-	Pos   Position
+	Pos   position
 	Token []byte
 }
 

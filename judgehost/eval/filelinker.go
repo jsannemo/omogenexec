@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"github.com/google/logger"
@@ -17,8 +17,8 @@ type fileLinker struct {
 	writeBase *util.FileBase
 }
 
-// NewFileLinker returns a new file linker, rooted at the given path.
-func NewFileLinker(dir string) (*fileLinker, error) {
+// newFileLinker returns a new file linker, rooted at the given path.
+func newFileLinker(dir string) (*fileLinker, error) {
 	base := util.NewFileBase(dir)
 	base.OwnerGid = util.OmogenexecGroupId()
 	if err := base.Mkdir("."); err != nil {
@@ -68,8 +68,8 @@ func (fl *fileLinker) LinkFile(path, inName string, writeable bool) error {
 	return fl.base(writeable).LinkInto(path, inName)
 }
 
-// clear resets the environment for a new execution.
-func (fl *fileLinker) clear() error {
+// Clear resets the environment for a new execution.
+func (fl *fileLinker) Clear() error {
 	rerr := fl.readBase.RemoveContents(".")
 	werr := fl.writeBase.RemoveContents(".")
 	if rerr != nil {
