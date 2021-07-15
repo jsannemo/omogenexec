@@ -114,7 +114,6 @@ func (e *Evaluator) Evaluate() error {
 		return fmt.Errorf("could not reset permissions: %v", err)
 	}
 	defer e.resetPermissions()
-	defer close(e.resultChan)
 	if err := e.programSandbox.Start(); err != nil {
 		return fmt.Errorf("failed starting sandbox: %v", err)
 	}
