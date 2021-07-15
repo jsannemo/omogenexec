@@ -108,6 +108,7 @@ func (e *Evaluator) resetPermissions() error {
 }
 
 func (e *Evaluator) Evaluate() error {
+	defer close(e.resultChan)
 	logger.Infof("Starting evaluation in %s", e.root)
 	if err := e.resetPermissions(); err != nil {
 		return fmt.Errorf("could not reset permissions: %v", err)
@@ -276,6 +277,7 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 		outWrite.Close()
 		wg.Done()
 	}()
+	// TODO: handle errors...
 	go func() {
 		validatorRun, validatorErr = e.evalSandbox.Run(append(e.plan.Validator.RunCommand, append([]string{
 			e.valLinker.PathFor("input", false),
@@ -284,10 +286,10 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 		}, tg.OutputValidatorFlags...)...))
 		inWrite.Close()
 		if programRun == nil {
-			 validatorFirst = true
+			validatorFirst = true
 			if !validatorRun.CrashedWith(exitCodeAc) {
-				 outRead.Close()
-			 }
+				outRead.Close()
+			}
 		}
 		wg.Done()
 	}()
@@ -340,7 +342,7 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 	tcPath := filepath.Join(e.root, tc.Name)
 	exit, err := e.runSubmission(tcPath, tc.InputPath)
 	if err != nil {
-		return res, err
+		return res, fmt.Errorf("sandbox fail: %v, logs %v", err, e.evalSandbox.logs())
 	}
 	if exit.Crashed() {
 		res.Verdict = apipb.Verdict_RUN_TIME_ERROR
