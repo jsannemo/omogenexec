@@ -48,6 +48,9 @@ func noCompile(runCommand []string, include func(string) bool) compileFunc {
 				filteredPaths = append(filteredPaths, file.Path)
 			}
 		}
+		if len(filteredPaths) == 0 {
+			return &Compilation{CompilerErrors: "No valid source files found"}, nil
+		}
 		runCommand = substituteArgs(runCommand, filteredPaths)
 		return &Compilation{
 			Program: &apipb.CompiledProgram{

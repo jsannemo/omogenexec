@@ -4,4 +4,5 @@ for k in {0..99}; do
   # adduser doesn't fail if the user already exists
   deluser --system omogenexec-user$k
 done
+deluser --system omogenexec-user
 delgroup --system omogenexec-users
