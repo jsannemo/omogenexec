@@ -58,7 +58,7 @@ func newSandbox(id int, args sandboxArgs) *sandboxWrapper {
 		writePaths = append(writePaths, filepath.Dir(args.ErrorPath))
 	}
 	sandboxArgs = append(sandboxArgs, mountArgs(readPaths, writePaths)...)
-	logger.Infof("sandboxWrapper %d running with args %v", id, sandboxArgs)
+	logger.Infof("Sandbox %d running with args %v", id, sandboxArgs)
 	cmd := exec.Command("/usr/bin/omogenexec", sandboxArgs...)
 	cmd.Env = []string{
 		"PATH=/bin:/usr/bin",
@@ -87,6 +87,7 @@ func (s *sandboxWrapper) Start() error {
 }
 
 func (s *sandboxWrapper) Run(cmdAndArgs []string) (*execResult, error) {
+	logger.Infof("Sandbox %d executing command %v",  cmdAndArgs)
 	// Binary format is [#of commands + args] command [0x0] arg [0x0] arg ... [0x0]
 	fields := len(cmdAndArgs)
 	if fields > 255 {

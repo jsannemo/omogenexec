@@ -40,10 +40,10 @@ func NewEvaluator(root string, plan *apipb.EvaluationPlan, results chan<- *apipb
 		resultChan: results,
 	}
 	if err := eval.initProgram(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed initializing program: %v", err)
 	}
 	if err := eval.initValidator(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed initializing validator: %v", err)
 	}
 	return eval, nil
 }
@@ -134,6 +134,7 @@ type evalable struct {
 	*apipb.TestCase
 }
 
+// evalableLess compares two evalable according to the order in which they should be evaluated.
 func evalableLess(a *evalable, b *evalable) bool {
 	var aName, bName string
 	if a.TestGroup != nil {
@@ -149,6 +150,7 @@ func evalableLess(a *evalable, b *evalable) bool {
 	return aName < bName
 }
 
+// worseness orders, increasingly, verdicts by how they should be returned by the worst error verdict mode.
 func worseness(v apipb.Verdict) int {
 	switch v {
 	case apipb.Verdict_ACCEPTED:
@@ -163,7 +165,8 @@ func worseness(v apipb.Verdict) int {
 	return -1
 }
 
-func mergeRes(res []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
+// mergeRes aggregates a set of subresults in a testgroup according to its aggregation rules.
+func mergeRes(results []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
 	result := &apipb.Result{
 		Type:        apipb.ResultType_TEST_GROUP,
 		Verdict:     apipb.Verdict_ACCEPTED,
@@ -176,7 +179,7 @@ func mergeRes(res []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
 		result.Score = math.Inf(-1)
 	}
 	anyAccepted := false
-	for _, res := range res {
+	for _, res := range results {
 		if res.Verdict == apipb.Verdict_ACCEPTED {
 			anyAccepted = true
 		} else if tg.VerdictMode == apipb.VerdictMode_WORST_ERROR && worseness(res.Verdict) > worseness(result.Verdict) {
@@ -226,7 +229,7 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup) (*apipb.Result, error) {
 			var err error
 			subres, err = e.evaluateCase(eval.TestCase, tg)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed on case %s: %v", eval.TestCase.Name, err)
 			}
 			res = append(res, subres)
 		}
@@ -296,10 +299,17 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 	inRead.Close()
 	outRead.Close()
 	if err := e.linker.Clear(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed clearing program environment: %v", err)
 	}
 	if err := e.valLinker.Clear(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed clearing validator environment: %v", err)
+	}
+
+	if programErr != nil {
+		return nil, fmt.Errorf("program run failed: %v", programErr)
+	}
+	if validatorErr != nil {
+		return nil, fmt.Errorf("validator run failed: %v", validatorErr)
 	}
 
 	val, err := e.validatorOutputFromExit(validatorRun)
@@ -341,7 +351,7 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 	tcPath := filepath.Join(e.root, tc.Name)
 	exit, err := e.runSubmission(tcPath, tc.InputPath)
 	if err != nil {
-		return res, fmt.Errorf("sandbox fail: %v, logs %v", err, e.evalSandbox.logs())
+		return res, fmt.Errorf("sandbox fail: %v, logs %v", err, e.programSandbox.logs())
 	}
 	if exit.Crashed() {
 		res.Verdict = apipb.Verdict_RUN_TIME_ERROR
@@ -352,7 +362,7 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 		if e.evalSandbox != nil {
 			valOutput, err := e.runValidator(tg.OutputValidatorFlags, tc.InputPath, outPath, tc.OutputPath)
 			if err != nil {
-				return res, err
+				return res, fmt.Errorf("failed validator run: %v", err)
 			}
 			ac = valOutput.Accepted
 			res.Score = valOutput.Score
@@ -360,7 +370,7 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 		} else {
 			diff, err := diffOutput(tc.OutputPath, outPath, tg.OutputValidatorFlags)
 			if err != nil {
-				return res, err
+				return res, fmt.Errorf("default validator failed: %v", err)
 			}
 			ac = diff.Match
 			res.Message = diff.Description
@@ -379,11 +389,11 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 	}
 	res.TimeUsageMs = int32(exit.TimeUsageMs)
 	if err := e.linker.Clear(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed clearing program env: %v", err)
 	}
 	if e.valLinker != nil {
 		if err := e.valLinker.Clear(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed clearing validator env: %v", err)
 		}
 	}
 	e.resultChan <- res

@@ -8,14 +8,12 @@ proto_library(
         "eval.proto",
         "language.proto",
         "program.proto",
-        "run_service.proto",
     ],
     visibility = ["//visibility:public"],
 )
 
 go_proto_library(
     name = "omogen_runner_go_proto",
-    compilers = ["@io_bazel_rules_go//proto:go_grpc"],
     importpath = "github.com/jsannemo/omogenexec/api",
     proto = ":omogen_runner_proto",
     visibility = ["//visibility:public"],

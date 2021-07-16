@@ -42,14 +42,14 @@ func Diff(reference, output io.Reader, args DiffArgs) (*DiffResult, error) {
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed reading reference output: %v", err)
 		}
 		refStr := string(refToken.Token)
 		outToken, err := out.Scan()
 		if err == io.EOF {
 			return &DiffResult{false, fmt.Sprintf("Expected more output (next reference token: %s at %v)", refStr, refToken.Pos)}, nil
 		} else if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed reading output: %v", err)
 		}
 		outStr := string(outToken.Token)
 		match, desc := matchToken(refStr, outStr, args)

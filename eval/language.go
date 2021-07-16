@@ -11,7 +11,7 @@ import (
 
 var languages = make(map[apipb.LanguageGroup]*Language)
 
-func init() {
+func InitLanguages() {
 	pypy, err := initPython("pypy3")
 	if err != nil {
 		logger.Fatalf("Failure during PyPy3 initialization: %v", err)
@@ -52,7 +52,7 @@ func initPython(executable string) (*Language, error) {
 			CompilationDescription: nil,
 			RunDescription:         fmt.Sprintf("%s {files}", executable),
 		},
-		compile: noCompile([]string{executable, "{files}", executable}, func(s string) bool {
+		compile: noCompile([]string{executable, "{files}"}, func(s string) bool {
 			return filepath.Ext(s) == ".py"
 		}),
 	}, nil

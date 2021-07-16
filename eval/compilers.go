@@ -2,15 +2,15 @@ package eval
 
 import (
 	"fmt"
-	"github.com/google/logger"
 	apipb "github.com/jsannemo/omogenexec/api"
 	"github.com/jsannemo/omogenexec/util"
 	"path"
 	"path/filepath"
 )
 
+// A Compilation is the result of compiling program sources.
 type Compilation struct {
-	// This is unset if the Compilation failed.
+	// This is unset if and only if the Compilation failed.
 	Program        *apipb.CompiledProgram
 	CompilerErrors string
 }
@@ -21,25 +21,25 @@ func Compile(program *apipb.Program, outputPath string) (*Compilation, error) {
 	langs := GetLanguages()
 	lang, found := langs[program.Language]
 	if !found {
-		logger.Fatalf("Could not find submission Language %v", program.Language)
+		return nil, fmt.Errorf("could not find language %v", program.Language)
 	}
 	fb := util.NewFileBase(outputPath)
 	fb.GroupWritable = true
 	fb.OwnerGid = util.OmogenexecGroupId()
 	if err := fb.Mkdir("."); err != nil {
-		return nil, fmt.Errorf("failed mkdir %s: %v", outputPath, err)
+		return nil, fmt.Errorf("failed compile output mkdir %s: %v", outputPath, err)
 	}
 	for _, file := range program.Sources {
 		err := fb.WriteFile(file.Path, file.Contents)
 		if err != nil {
-			return nil, fmt.Errorf("failed writing %s: %v", file.Path, err)
+			return nil, fmt.Errorf("failed writing source %s: %v", file.Path, err)
 		}
 	}
 	return lang.compile(program, fb)
 }
 
 // noCompile represents compilation that only copies some of the source files and uses the given
-// Run command to execute the program.
+// run command to execute the program.
 func noCompile(runCommand []string, include func(string) bool) compileFunc {
 	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
 		var filteredPaths []string
@@ -72,12 +72,12 @@ func cppCompile(gppPath string) compileFunc {
 		sandbox := newSandbox(0, sandboxArgs)
 		err := sandbox.Start()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("couldn't start compilation sandbox: %v", err)
 		}
 		run, err := sandbox.Run(append([]string{gppPath}, substituteArgs(gppFlags, filteredPaths)...))
 		sandbox.Finish()
 		if err != nil {
-			return nil, fmt.Errorf("sandboxWrapper failed: %v, %v", err, sandbox.sandboxErr.String())
+			return nil, fmt.Errorf("sandbox failed: %v, %v", err, sandbox.sandboxErr.String())
 		}
 		stderr, err := outputBase.ReadFile("__compiler_errors")
 		if err != nil {
