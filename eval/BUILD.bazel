@@ -11,7 +11,7 @@ go_library(
         "runnable.go",
         "sandbox.go",
     ],
-    importpath = "github.com/jsannemo/omogenexec/judgehost/eval",
+    importpath = "github.com/jsannemo/omogenexec/eval",
     visibility = ["//visibility:public"],
     deps = [
         "//api",
