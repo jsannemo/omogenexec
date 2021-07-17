@@ -40,7 +40,7 @@ func Compile(program *apipb.Program, outputPath string) (*Compilation, error) {
 
 // noCompile represents compilation that only copies some of the source files and uses the given
 // run command to execute the program.
-func noCompile(runCommand []string, include func(string) bool) compileFunc {
+func noCompile(runCommandTemplate []string, include func(string) bool) compileFunc {
 	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
 		var filteredPaths []string
 		for _, file := range program.Sources {
@@ -51,7 +51,8 @@ func noCompile(runCommand []string, include func(string) bool) compileFunc {
 		if len(filteredPaths) == 0 {
 			return &Compilation{CompilerErrors: "No valid source files found"}, nil
 		}
-		runCommand = substituteArgs(runCommand, filteredPaths)
+
+		runCommand := substituteArgs(runCommandTemplate, filteredPaths)
 		return &Compilation{
 			Program: &apipb.CompiledProgram{
 				ProgramRoot: outputBase.Path(),
