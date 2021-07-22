@@ -87,7 +87,7 @@ func (s *sandboxWrapper) Start() error {
 }
 
 func (s *sandboxWrapper) Run(cmdAndArgs []string) (*execResult, error) {
-	logger.Infof("Sandbox %d executing command %v",  cmdAndArgs)
+	logger.Infof("Sandbox executing command %v", cmdAndArgs)
 	// Binary format is [#of commands + args] command [0x0] arg [0x0] arg ... [0x0]
 	fields := len(cmdAndArgs)
 	if fields > 255 {
@@ -115,7 +115,7 @@ func (s *sandboxWrapper) Run(cmdAndArgs []string) (*execResult, error) {
 			if killReason == "tle" {
 				res.ExitType = timedOut
 			} else if killReason == "setup" {
-				return res, fmt.Errorf("sandbox Run died during setup")
+				return res, fmt.Errorf("sandbox died during setup: %v", s.logs())
 			} else {
 				logger.Fatalf("Unrecognized output from sandbox (killed %s)", killReason)
 			}
@@ -144,7 +144,7 @@ func (s *sandboxWrapper) Run(cmdAndArgs []string) (*execResult, error) {
 			res.MemoryUsageKb = mem / 1000
 		} else if tok == "cpu" {
 			cpuStr := s.sandboxToken()
-			cpu, err := strconv.Atoi(cpuStr)
+			cpu, err := strconv.ParseInt(cpuStr, 10, 64)
 			if err != nil {
 				logger.Fatalf("Unrecognized output from sandbox (cpu %s)", cpuStr)
 			}

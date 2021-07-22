@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -22,14 +23,15 @@ const (
 )
 
 type Evaluator struct {
-	root           string
-	linker         *fileLinker
-	valLinker      *fileLinker
-	plan           *apipb.EvaluationPlan
-	evalCache      map[string]*apipb.Result
-	programSandbox *sandboxWrapper
-	evalSandbox    *sandboxWrapper
-	resultChan     chan<- *apipb.Result
+	root                     string
+	linker                   *fileLinker
+	valLinker                *fileLinker
+	plan                     *apipb.EvaluationPlan
+	evalCache                map[string]*apipb.Result
+	programSandbox           *sandboxWrapper
+	evalSandbox              *sandboxWrapper
+	resultChan               chan<- *apipb.Result
+	validatorCommandTemplate []string
 }
 
 func NewEvaluator(root string, plan *apipb.EvaluationPlan, results chan<- *apipb.Result) (*Evaluator, error) {
@@ -99,6 +101,12 @@ func (e *Evaluator) initValidator() error {
 		args.InputPath = e.linker.PathFor("output", true)
 	}
 	e.evalSandbox = newSandbox(1, args)
+	e.validatorCommandTemplate = append(e.validatorCommandTemplate, e.plan.Validator.RunCommand...)
+	e.validatorCommandTemplate = append(e.validatorCommandTemplate,
+		e.valLinker.PathFor("input", false),
+		e.valLinker.PathFor("judge_answer", false),
+		e.valLinker.PathFor(".", true),
+	)
 	return nil
 }
 
@@ -195,6 +203,9 @@ func mergeRes(results []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
 		} else if tg.ScoringMode == apipb.ScoringMode_MAX {
 			result.Score = math.Max(result.Score, res.Score)
 		}
+		if res.TimeUsageMs > result.TimeUsageMs {
+			result.TimeUsageMs = res.TimeUsageMs
+		}
 	}
 
 	if tg.VerdictMode == apipb.VerdictMode_ALWAYS_ACCEPT || (anyAccepted && tg.AcceptIfAnyAccepted) {
@@ -227,11 +238,19 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup) (*apipb.Result, error) {
 			res = append(res, subres)
 		} else {
 			var err error
-			subres, err = e.evaluateCase(eval.TestCase, tg)
-			if err != nil {
-				return nil, fmt.Errorf("failed on case %s: %v", eval.TestCase.Name, err)
+			tc := eval.TestCase
+			cacheKey := tc.InputPath + " " + tc.OutputPath + strings.Join(tg.OutputValidatorFlags, " ")
+			if cached, found := e.evalCache[cacheKey]; found {
+				subres = cached
+				res = append(res, cached)
+			} else {
+				subres, err = e.evaluateCase(tc, tg)
+				if err != nil {
+					return nil, fmt.Errorf("failed on case %s: %v", eval.TestCase.Name, err)
+				}
+				e.evalCache[cacheKey] = subres
+				res = append(res, subres)
 			}
-			res = append(res, subres)
 		}
 		if subres.Verdict != apipb.Verdict_ACCEPTED && tg.BreakOnFail {
 			break
@@ -279,13 +298,8 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 		outWrite.Close()
 		wg.Done()
 	}()
-	// TODO: handle errors...
 	go func() {
-		validatorRun, validatorErr = e.evalSandbox.Run(append(e.plan.Validator.RunCommand, append([]string{
-			e.valLinker.PathFor("input", false),
-			e.valLinker.PathFor("judge_answer", false),
-			e.valLinker.PathFor(".", true),
-		}, tg.OutputValidatorFlags...)...))
+		validatorRun, validatorErr = e.evalSandbox.Run(e.validatorCommand(tg.OutputValidatorFlags))
 		inWrite.Close()
 		if programRun == nil {
 			validatorFirst = true
@@ -344,11 +358,10 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 		return e.evaluateInteractive(tc, tg)
 	}
 	outPath := e.linker.PathFor("output", true)
-	// TODO: implement evaluation cache
 	res := &apipb.Result{
 		Type: apipb.ResultType_TEST_CASE,
 	}
-	tcPath := filepath.Join(e.root, tc.Name)
+	tcPath := filepath.Join(e.root, fmt.Sprintf("case-%s", tc.Name))
 	exit, err := e.runSubmission(tcPath, tc.InputPath)
 	if err != nil {
 		return res, fmt.Errorf("sandbox fail: %v, logs %v", err, e.programSandbox.logs())
@@ -387,7 +400,7 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 			}
 		}
 	}
-	res.TimeUsageMs = int32(exit.TimeUsageMs)
+	res.TimeUsageMs = exit.TimeUsageMs
 	if err := e.linker.Clear(); err != nil {
 		return nil, fmt.Errorf("failed clearing program env: %v", err)
 	}
@@ -447,11 +460,7 @@ func (e *Evaluator) runValidator(groupFlags []string, inpath, teampath, anspath 
 		return nil, err
 	}
 
-	exit, err := e.evalSandbox.Run(append(e.plan.Validator.RunCommand, append([]string{
-		e.valLinker.PathFor("input", false),
-		e.valLinker.PathFor("judge_answer", false),
-		e.valLinker.PathFor(".", true),
-	}, groupFlags...)...))
+	exit, err := e.evalSandbox.Run(e.validatorCommand(groupFlags))
 	if err != nil {
 		return nil, err
 	}
@@ -477,7 +486,7 @@ func (e *Evaluator) validatorOutputFromExit(exit *execResult) (*ValidatorOutput,
 		if err != nil {
 			return nil, fmt.Errorf("could not read crashed output validator output: %v", err)
 		}
-		return nil, fmt.Errorf("output validator crashed: %v", string(dat)+" "+string(dat2))
+		return nil, fmt.Errorf("output validator crashed (err: %s, output: %s)", string(dat), string(dat2))
 	}
 	judgeMessage, err := ioutil.ReadFile(e.valLinker.PathFor(judgeMessageFile, true))
 	if err == nil {
@@ -495,6 +504,13 @@ func (e *Evaluator) validatorOutputFromExit(exit *execResult) (*ValidatorOutput,
 		output.Score = score
 	}
 	return output, nil
+}
+
+func (e *Evaluator) validatorCommand(groupFlags []string) []string {
+	var flags []string
+	flags = append(flags, e.validatorCommandTemplate...)
+	flags = append(flags, groupFlags...)
+	return flags
 }
 
 func diffOutput(refPath, outPath string, args []string) (*DiffResult, error) {

@@ -80,6 +80,6 @@ message Result {
   ResultType type = 1;
   Verdict verdict = 2;
   double score = 3;
-  int32 time_usage_ms = 4;
+  int64 time_usage_ms = 4;
   string message = 5;
 }

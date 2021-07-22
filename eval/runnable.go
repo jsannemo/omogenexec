@@ -21,7 +21,7 @@ type execResult struct {
 	// The termination signal. Only set if the program exited with a signal.
 	Signal int
 	// The Time the execution used.
-	TimeUsageMs int
+	TimeUsageMs int64
 	// The memory the execution used.
 	MemoryUsageKb int
 }
