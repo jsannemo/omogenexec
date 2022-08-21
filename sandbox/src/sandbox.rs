@@ -137,7 +137,7 @@ pub fn sandbox_main(ctx: Context) -> isize {
     set_kill_on_parent_death().unwrap();
     let cg = setup_cgroups(&ctx);
     let cg_mem: &cgroups_rs::memory::MemController = cg.controller_of().unwrap();
-    let cg_acct: &cgroups_rs::cpuacct::CpuAcctController = cg.controller_of().unwrap();
+    let cg_cpu: &cgroups_rs::cpu::CpuController = cg.controller_of().unwrap();
     let cg_pid: &cgroups_rs::pid::PidController = cg.controller_of().unwrap();
     cg_mem.set_limit(ctx.mem_limit_bytes).unwrap();
     setup_container_fs(&ctx);
@@ -168,15 +168,13 @@ pub fn sandbox_main(ctx: Context) -> isize {
                 let mut err_file = unsafe { File::from_raw_fd(err_pipe) };
                 let mut s = String::new();
                 cg_pid.set_pid_max(MaxValue::Value(ctx.pid_limit)).unwrap();
-                cg_mem.reset_max_usage().unwrap();
                 cg_mem.add_task(&CgroupPid::from(child as u64)).unwrap();
-                cg_acct.add_task(&CgroupPid::from(child as u64)).unwrap();
+                cg_cpu.add_task(&CgroupPid::from(child as u64)).unwrap();
                 cg_pid.add_task(&CgroupPid::from(child as u64)).unwrap();
                 // The program will start exec'ing immediately after we read this write, since the
                 // write of pipes block on the corresponding read.
                 let now = std::time::SystemTime::now();
                 err_file.read_to_string(&mut s).unwrap();
-                cg_acct.reset().unwrap();
                 if s != "ok" {
                     println!("killed setup");
                     println!("done");
@@ -187,7 +185,7 @@ pub fn sandbox_main(ctx: Context) -> isize {
                     let maybe_exit = wait_for_nohang(child).unwrap();
                     match maybe_exit {
                         None => {
-                            let cpu_nanos = cg_acct.cpuacct().usage;
+                            let cpu_nanos = cpu_stat_nanos(cg_cpu.cpu().stat);
                             let cpu_time = std::time::Duration::new(
                                 cpu_nanos / 1_000_000_000,
                                 (cpu_nanos % 1_000_000_000) as u32,
@@ -248,12 +246,8 @@ pub fn sandbox_main(ctx: Context) -> isize {
                         ),
                     }
                 }
-                // Even though the main process exited, it can still have subprocess
-                // running until we kill them; we must this keep measuring resources
-                // until now
-                println!("mem {:?}", cg_mem.memswap().max_usage_in_bytes);
                 // Nanos -> Millis
-                println!("cpu {:?}", cg_acct.cpuacct().usage / 1_000_000);
+                println!("cpu {:?}", cpu_stat_nanos(cg_cpu.cpu().stat) / 1_000_000);
                 println!("done");
             }
         }
@@ -261,6 +255,21 @@ pub fn sandbox_main(ctx: Context) -> isize {
     }
     cg.delete().unwrap();
     0
+}
+
+fn cpu_stat_nanos(stat: String) -> u64 {
+    for line in stat.split("\n") {
+        let fields: Vec<&str> = line.split(' ').collect();
+        if fields[0] == "usage_usec" {
+            match fields[1].parse::<u64>() {
+                Ok(res) => { return res * 1000; }
+                Err(_) => panic!(
+                    "failed parsing usage_usec!?"
+                )
+            }
+        }
+    }
+    panic!("cpu.stat doesn't have usage_usec!?")
 }
 
 fn set_streams(ctx: &Context) -> Result<(), String> {
