@@ -22,6 +22,18 @@ const (
 	exitCodeWa = 43
 )
 
+func (e *Evaluator) GetResultForGroup(tcRes *apipb.Result, tg *apipb.TestGroup) *apipb.Result {
+    updatedResult := *tcRes
+    if !e.plan.ScoringValidator {
+        if tcRes.Verdict == apipb.Verdict_ACCEPTED {
+            updatedResult.Score = tg.AcceptScore
+        } else {
+            updatedResult.Score = tg.RejectScore
+        }
+    }
+    return &updatedResult
+}
+
 type Evaluator struct {
 	root                     string
 	linker                   *fileLinker
@@ -199,7 +211,9 @@ func mergeRes(results []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
 		if tg.ScoringMode == apipb.ScoringMode_SUM || tg.ScoringMode == apipb.ScoringMode_AVG {
 			result.Score += res.Score
 		} else if tg.ScoringMode == apipb.ScoringMode_MIN {
+            fmt.Printf("score before %f case %f\n", result.Score, res.Score);
 			result.Score = math.Min(result.Score, res.Score)
+            fmt.Printf("score after %f\n", result.Score);
 		} else if tg.ScoringMode == apipb.ScoringMode_MAX {
 			result.Score = math.Max(result.Score, res.Score)
 		}
@@ -235,26 +249,28 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup) (*apipb.Result, error) {
 			if err != nil {
 				return nil, err
 			}
-			res = append(res, subres)
 		} else {
 			var err error
 			tc := eval.TestCase
 			cacheKey := tc.InputPath + " " + tc.OutputPath + strings.Join(tg.OutputValidatorFlags, " ")
 			if cached, found := e.evalCache[cacheKey]; found {
-				subres = cached
-				res = append(res, cached)
+                subres = e.GetResultForGroup(cached, tg)
 			} else {
 				subres, err = e.evaluateCase(tc, tg)
 				if err != nil {
 					return nil, fmt.Errorf("failed on case %s: %v", eval.TestCase.Name, err)
 				}
 				e.evalCache[cacheKey] = subres
-				res = append(res, subres)
 			}
 		}
+        res = append(res, subres)
 		if subres.Verdict != apipb.Verdict_ACCEPTED && tg.BreakOnFail {
 			break
 		}
+	}
+	// By happy coincidence, sample < secret in sort order, so sample is always the first result for the root group.
+	if tg.IgnoreSample {
+		res = res[1:]
 	}
 	groupRes := mergeRes(res, tg)
 	e.resultChan <- groupRes
@@ -330,24 +346,28 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 	if err != nil {
 		return nil, err
 	}
-	res := &apipb.Result{}
+	res := &apipb.Result{
+        Score: tg.RejectScore,
+    }
 	if programRun.TimedOut() {
 		res.Verdict = apipb.Verdict_TIME_LIMIT_EXCEEDED
 	} else if programRun.Crashed() && programRun.Signal != int(syscall.SIGPIPE) && (!validatorFirst || val.Accepted) {
 		res.Verdict = apipb.Verdict_RUN_TIME_ERROR
 	} else {
-		res.Score = val.Score
 		res.Message = val.JudgeMessage
+
+        if e.plan.ScoringValidator {
+            res.Score = val.Score
+        } else if val.Accepted {
+            res.Score = tg.AcceptScore
+        } else {
+            res.Score = tg.RejectScore
+        }
+
 		if val.Accepted {
 			res.Verdict = apipb.Verdict_ACCEPTED
-			if !e.plan.ScoringValidator {
-				res.Score = tg.AcceptScore
-			}
 		} else {
 			res.Verdict = apipb.Verdict_WRONG_ANSWER
-			if !e.plan.ScoringValidator {
-				res.Score = tg.RejectScore
-			}
 		}
 	}
 	return res, nil

@@ -54,6 +54,7 @@ message TestGroup {
   ScoringMode scoring_mode = 8;
   VerdictMode verdict_mode = 9;
   bool accept_if_any_accepted = 10;
+  bool ignore_sample = 11;
 }
 
 message TestCase {
