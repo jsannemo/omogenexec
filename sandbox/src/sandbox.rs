@@ -181,18 +181,19 @@ pub fn sandbox_main(ctx: Context) -> isize {
                     continue;
                 }
                 let mut sleep = 5;
+                let cpu_before = cpu_stat_nanos(cg_cpu.cpu().stat);
                 loop {
                     let maybe_exit = wait_for_nohang(child).unwrap();
                     match maybe_exit {
                         None => {
-                            let cpu_nanos = cpu_stat_nanos(cg_cpu.cpu().stat);
+                            let cpu_nanos = cpu_stat_nanos(cg_cpu.cpu().stat) - cpu_before;
                             let cpu_time = std::time::Duration::new(
                                 cpu_nanos / 1_000_000_000,
                                 (cpu_nanos % 1_000_000_000) as u32,
                             );
                             let wall_time = now.elapsed().unwrap();
-                            if wall_time > ctx.wall_time_lim || cpu_time > ctx.time_lim {
-                                println!("killed tle");
+                            // Wait 1 extra second of CPU time for displaying close calls to judges
+                            if wall_time > ctx.wall_time_lim || cpu_time > ctx.time_lim + std::time::Duration::from_secs(1) {
                                 break;
                             }
                             std::thread::sleep(std::time::Duration::from_millis(sleep));
@@ -246,8 +247,16 @@ pub fn sandbox_main(ctx: Context) -> isize {
                         ),
                     }
                 }
+                let cpu_nanos = cpu_stat_nanos(cg_cpu.cpu().stat) - cpu_before;
+                let cpu_time = std::time::Duration::new(
+                    cpu_nanos / 1_000_000_000,
+                    (cpu_nanos % 1_000_000_000) as u32,
+                );
+                if cpu_time > ctx.time_lim {
+                    println!("killed tle");
+                }
                 // Nanos -> Millis
-                println!("cpu {:?}", cpu_stat_nanos(cg_cpu.cpu().stat) / 1_000_000);
+                println!("cpu {:?}", cpu_nanos / 1_000_000);
                 println!("done");
             }
         }
@@ -258,6 +267,7 @@ pub fn sandbox_main(ctx: Context) -> isize {
 }
 
 fn cpu_stat_nanos(stat: String) -> u64 {
+    eprintln!("stat: {:?}", stat);
     for line in stat.split("\n") {
         let fields: Vec<&str> = line.split(' ').collect();
         if fields[0] == "usage_usec" {

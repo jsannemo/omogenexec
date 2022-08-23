@@ -33,7 +33,7 @@ type DiffArgs struct {
 	SpaceSensitive bool
 }
 
-// Diff compares the a Reader against a "correct" reference Reader by tokenizing them.
+// Diff compares a Reader against a "correct" reference Reader by tokenizing them.
 func Diff(reference, output io.Reader, args DiffArgs) (*DiffResult, error) {
 	ref := newPositionedScanner(bufio.NewReader(reference), args.SpaceSensitive)
 	out := newPositionedScanner(bufio.NewReader(output), args.SpaceSensitive)

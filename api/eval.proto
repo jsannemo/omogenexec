@@ -9,7 +9,7 @@ enum EvaluationType {
   // An input file is passed to a program and its output is compared with an
   // output file (possibly through an extra validator program).
   SIMPLE = 1;
-  // The program communicates with a validator program which ias given the
+  // The program communicates with a validator program which is given the
   // input and output files.
   INTERACTIVE = 2;
 }
@@ -26,6 +26,8 @@ message EvaluationPlan {
   int32 validator_time_limit_ms = 7;
   int32 validator_mem_limit_kb = 8;
   bool scoring_validator = 9;
+
+  CompiledProgram grader = 10;
 }
 
 enum ScoringMode {
@@ -44,17 +46,25 @@ enum VerdictMode {
 }
 
 message TestGroup {
+  string name = 3;
+
+  // Contents
   repeated TestCase cases = 1;
   repeated TestGroup groups = 2;
-  string name = 3;
+  bool break_on_fail = 7;
+
+  // Grading
   double accept_score = 4;
   double reject_score = 5;
-  repeated string output_validator_flags = 6;
-  bool break_on_fail = 7;
   ScoringMode scoring_mode = 8;
   VerdictMode verdict_mode = 9;
   bool accept_if_any_accepted = 10;
   bool ignore_sample = 11;
+  bool custom_grading = 12;
+  repeated string grader_flags = 13;
+
+  // Validation
+  repeated string output_validator_flags = 6;
 }
 
 message TestCase {

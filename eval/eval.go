@@ -5,7 +5,6 @@ import (
 	"github.com/google/logger"
 	apipb "github.com/jsannemo/omogenexec/api"
 	"github.com/jsannemo/omogenexec/util"
-	"io/ioutil"
 	"math"
 	"os"
 	"os/exec"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const (
@@ -23,27 +23,30 @@ const (
 )
 
 func (e *Evaluator) GetResultForGroup(tcRes *apipb.Result, tg *apipb.TestGroup) *apipb.Result {
-    updatedResult := *tcRes
-    if !e.plan.ScoringValidator {
-        if tcRes.Verdict == apipb.Verdict_ACCEPTED {
-            updatedResult.Score = tg.AcceptScore
-        } else {
-            updatedResult.Score = tg.RejectScore
-        }
-    }
-    return &updatedResult
+	updatedResult := *tcRes
+	if !e.plan.ScoringValidator {
+		if tcRes.Verdict == apipb.Verdict_ACCEPTED {
+			updatedResult.Score = tg.AcceptScore
+		} else {
+			updatedResult.Score = tg.RejectScore
+		}
+	}
+	return &updatedResult
 }
 
 type Evaluator struct {
 	root                     string
 	linker                   *fileLinker
 	valLinker                *fileLinker
+	graderLinker             *fileLinker
 	plan                     *apipb.EvaluationPlan
 	evalCache                map[string]*apipb.Result
 	programSandbox           *sandboxWrapper
 	evalSandbox              *sandboxWrapper
+	graderSandbox            *sandboxWrapper
 	resultChan               chan<- *apipb.Result
 	validatorCommandTemplate []string
+	graderCommandTemplate    []string
 }
 
 func NewEvaluator(root string, plan *apipb.EvaluationPlan, results chan<- *apipb.Result) (*Evaluator, error) {
@@ -58,6 +61,9 @@ func NewEvaluator(root string, plan *apipb.EvaluationPlan, results chan<- *apipb
 	}
 	if err := eval.initValidator(); err != nil {
 		return nil, fmt.Errorf("failed initializing validator: %v", err)
+	}
+	if err := eval.initGrader(); err != nil {
+		return nil, fmt.Errorf("failed initializing grader: %v", err)
 	}
 	return eval, nil
 }
@@ -122,6 +128,42 @@ func (e *Evaluator) initValidator() error {
 	return nil
 }
 
+func (e *Evaluator) graderCommand(groupFlags []string) []string {
+	var flags []string
+	flags = append(flags, e.graderCommandTemplate...)
+	flags = append(flags, groupFlags...)
+	return flags
+}
+
+func (e *Evaluator) initGrader() error {
+	if e.plan.Grader == nil {
+		return nil
+	}
+	graderfl, err := newFileLinker(filepath.Join(e.root, "graderenv"))
+	if err != nil {
+		return fmt.Errorf("failed creating grader fileLinker: %v", err)
+	}
+	e.graderLinker = graderfl
+	args := sandboxArgs{
+		WorkingDirectory: e.plan.Grader.ProgramRoot,
+		InputPath:        e.graderLinker.PathFor("input", false),
+		OutputPath:       e.graderLinker.PathFor("output", true),
+		ErrorPath:        e.graderLinker.PathFor("error", true),
+		ExtraReadPaths: []string{
+			e.graderLinker.readBase.Path(),
+			e.plan.Grader.ProgramRoot,
+		},
+		ExtraWritePaths: []string{
+			e.graderLinker.writeBase.Path(),
+		},
+		TimeLimitMs:   int((60 * time.Second).Milliseconds()),
+		MemoryLimitKb: 1000 * 1000, // 1000 MB = 1 GB
+	}
+	e.graderSandbox = newSandbox(2, args)
+	e.graderCommandTemplate = e.plan.Grader.GetRunCommand()
+	return nil
+}
+
 func (e *Evaluator) resetPermissions() error {
 	cmd := exec.Command("/usr/bin/omogenexec-fixpermissions", "--path", filepath.Dir(e.root))
 	return cmd.Run()
@@ -143,6 +185,12 @@ func (e *Evaluator) Evaluate() error {
 			return fmt.Errorf("failed starting sandbox: %v", err)
 		}
 		defer e.evalSandbox.Finish()
+	}
+	if e.plan.Grader != nil {
+		if err := e.graderSandbox.Start(); err != nil {
+			return fmt.Errorf("failed starting sandbox: %v", err)
+		}
+		defer e.graderSandbox.Finish()
 	}
 	_, err := e.evaluateGroup(e.plan.RootGroup)
 	logger.Infof("Completed evaluation of %s", e.root)
@@ -181,12 +229,94 @@ func worseness(v apipb.Verdict) int {
 		return 2
 	case apipb.Verdict_WRONG_ANSWER:
 		return 3
+	default:
+		panic(fmt.Sprintf("unknown verdict %v", v))
 	}
-	return -1
+}
+
+func verdictToAbbreviation(v apipb.Verdict) string {
+	switch v {
+	case apipb.Verdict_ACCEPTED:
+		return "AC"
+	case apipb.Verdict_RUN_TIME_ERROR:
+		return "RTE"
+	case apipb.Verdict_TIME_LIMIT_EXCEEDED:
+		return "TLE"
+	case apipb.Verdict_WRONG_ANSWER:
+		return "WA"
+	default:
+		panic(fmt.Sprintf("unknown verdict %v", v))
+	}
+}
+
+func abbreviationToVerdict(v string) (apipb.Verdict, error) {
+	switch v {
+	case "AC":
+		return apipb.Verdict_ACCEPTED, nil
+	case "RTE":
+		return apipb.Verdict_RUN_TIME_ERROR, nil
+	case "TLE":
+		return apipb.Verdict_TIME_LIMIT_EXCEEDED, nil
+	case "WA":
+		return apipb.Verdict_WRONG_ANSWER, nil
+	default:
+		return apipb.Verdict_VERDICT_UNSPECIFIED, fmt.Errorf("unknown abbreviation: %s", v)
+	}
 }
 
 // mergeRes aggregates a set of subresults in a testgroup according to its aggregation rules.
-func mergeRes(results []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
+func (e *Evaluator) mergeRes(results []*apipb.Result, tg *apipb.TestGroup) (*apipb.Result, error) {
+	if tg.CustomGrading {
+		result := &apipb.Result{
+			Type:        apipb.ResultType_TEST_GROUP,
+			TimeUsageMs: 0,
+		}
+		var graderInputs []byte
+		for _, res := range results {
+			graderInputs = append(graderInputs, []byte(fmt.Sprintf("%s %f\n", verdictToAbbreviation(res.Verdict), res.Score))...)
+			if res.TimeUsageMs > result.TimeUsageMs {
+				result.TimeUsageMs = res.TimeUsageMs
+			}
+		}
+		if err := e.graderLinker.readBase.WriteFile("input", graderInputs); err != nil {
+			return nil, err
+		}
+		run, err := e.graderSandbox.Run(e.graderCommand(tg.GraderFlags))
+		if err != nil {
+			return nil, fmt.Errorf("failed running grader: %v", err)
+		}
+		if run.TimedOut() {
+			return nil, fmt.Errorf("custom grader timed out")
+		}
+		if run.Crashed() {
+			return nil, fmt.Errorf("custom grader crashed")
+		}
+		dat, err := e.graderLinker.writeBase.ReadFile("output")
+		if err != nil {
+			return nil, fmt.Errorf("failed reading grader output: %v", err)
+		}
+		parts := strings.Split(string(dat), " ")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid grader output: %v", parts)
+		}
+		parts[1] = strings.TrimSpace(parts[1])
+		score, err := strconv.ParseFloat(parts[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid grader output: %v", parts)
+		}
+		result.Score = score
+		verdict, err := abbreviationToVerdict(parts[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid grader output: %v", parts)
+		}
+		result.Verdict = verdict
+		return result, nil
+	} else {
+		return defaultGrader(results, tg), nil
+	}
+}
+
+func defaultGrader(results []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
 	result := &apipb.Result{
 		Type:        apipb.ResultType_TEST_GROUP,
 		Verdict:     apipb.Verdict_ACCEPTED,
@@ -211,9 +341,7 @@ func mergeRes(results []*apipb.Result, tg *apipb.TestGroup) *apipb.Result {
 		if tg.ScoringMode == apipb.ScoringMode_SUM || tg.ScoringMode == apipb.ScoringMode_AVG {
 			result.Score += res.Score
 		} else if tg.ScoringMode == apipb.ScoringMode_MIN {
-            fmt.Printf("score before %f case %f\n", result.Score, res.Score);
 			result.Score = math.Min(result.Score, res.Score)
-            fmt.Printf("score after %f\n", result.Score);
 		} else if tg.ScoringMode == apipb.ScoringMode_MAX {
 			result.Score = math.Max(result.Score, res.Score)
 		}
@@ -254,7 +382,7 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup) (*apipb.Result, error) {
 			tc := eval.TestCase
 			cacheKey := tc.InputPath + " " + tc.OutputPath + strings.Join(tg.OutputValidatorFlags, " ")
 			if cached, found := e.evalCache[cacheKey]; found {
-                subres = e.GetResultForGroup(cached, tg)
+				subres = e.GetResultForGroup(cached, tg)
 			} else {
 				subres, err = e.evaluateCase(tc, tg)
 				if err != nil {
@@ -263,7 +391,7 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup) (*apipb.Result, error) {
 				e.evalCache[cacheKey] = subres
 			}
 		}
-        res = append(res, subres)
+		res = append(res, subres)
 		if subres.Verdict != apipb.Verdict_ACCEPTED && tg.BreakOnFail {
 			break
 		}
@@ -272,7 +400,10 @@ func (e *Evaluator) evaluateGroup(tg *apipb.TestGroup) (*apipb.Result, error) {
 	if tg.IgnoreSample {
 		res = res[1:]
 	}
-	groupRes := mergeRes(res, tg)
+	groupRes, err := e.mergeRes(res, tg)
+	if err != nil {
+		return nil, err
+	}
 	e.resultChan <- groupRes
 	return groupRes, nil
 }
@@ -347,8 +478,8 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 		return nil, err
 	}
 	res := &apipb.Result{
-        Score: tg.RejectScore,
-    }
+		Score: tg.RejectScore,
+	}
 	if programRun.TimedOut() {
 		res.Verdict = apipb.Verdict_TIME_LIMIT_EXCEEDED
 	} else if programRun.Crashed() && programRun.Signal != int(syscall.SIGPIPE) && (!validatorFirst || val.Accepted) {
@@ -356,13 +487,13 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 	} else {
 		res.Message = val.JudgeMessage
 
-        if e.plan.ScoringValidator {
-            res.Score = val.Score
-        } else if val.Accepted {
-            res.Score = tg.AcceptScore
-        } else {
-            res.Score = tg.RejectScore
-        }
+		if e.plan.ScoringValidator {
+			res.Score = val.Score
+		} else if val.Accepted {
+			res.Score = tg.AcceptScore
+		} else {
+			res.Score = tg.RejectScore
+		}
 
 		if val.Accepted {
 			res.Verdict = apipb.Verdict_ACCEPTED
@@ -430,6 +561,7 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 		}
 	}
 	e.resultChan <- res
+	logger.Infof("finished test case %s: %v", tc.Name, res)
 	return res, nil
 }
 
@@ -498,22 +630,22 @@ func (e *Evaluator) validatorOutputFromExit(exit *execResult) (*ValidatorOutput,
 		output.Accepted = false
 	} else {
 		// Crash was abnormal
-		dat, err := ioutil.ReadFile(e.valLinker.PathFor("error", true))
+		dat, err := e.valLinker.writeBase.ReadFile("error")
 		if err != nil {
 			return nil, fmt.Errorf("could not read crashed output validator errors: %v", err)
 		}
-		dat2, err := ioutil.ReadFile(e.valLinker.PathFor("output", true))
+		dat2, err := e.valLinker.writeBase.ReadFile("output")
 		if err != nil {
 			return nil, fmt.Errorf("could not read crashed output validator output: %v", err)
 		}
 		return nil, fmt.Errorf("output validator crashed (err: %s, output: %s)", string(dat), string(dat2))
 	}
-	judgeMessage, err := ioutil.ReadFile(e.valLinker.PathFor(judgeMessageFile, true))
+	judgeMessage, err := e.valLinker.writeBase.ReadFile(judgeMessageFile)
 	if err == nil {
 		output.JudgeMessage = string(judgeMessage)
 	}
 	if e.plan.ScoringValidator && output.Accepted {
-		scoreStr, err := ioutil.ReadFile(e.valLinker.PathFor(scoreFile, true))
+		scoreStr, err := e.valLinker.writeBase.ReadFile(scoreFile)
 		if err != nil {
 			return nil, fmt.Errorf("could not read score from scoring validator %v", err)
 		}
@@ -548,21 +680,25 @@ func diffOutput(refPath, outPath string, args []string) (*DiffResult, error) {
 		arg := args[argIdx]
 		if arg == "case_sensitive" {
 			diffArgs.CaseSensitive = true
+			argIdx += 1
 		} else if arg == "space_change_sensitive" {
 			diffArgs.SpaceSensitive = true
-		} else if argIdx+1 < len(args) {
-			if arg == "float_tolerance" || arg == "float_relative_tolerance" || arg == "float_absolute_tolerance" {
-				tolerance, err := strconv.ParseFloat(args[argIdx+1], 64)
-				if err != nil {
-					return nil, err
-				}
-				if arg != "float_absolute_tolerance" {
-					diffArgs.RelativePrec = tolerance
-				}
-				if arg != "float_relative_tolerance" {
-					diffArgs.AbsolutePrec = tolerance
-				}
+			argIdx += 1
+		} else if argIdx+1 < len(args) && (arg == "float_tolerance" || arg == "float_relative_tolerance" || arg == "float_absolute_tolerance") {
+			tolerance, err := strconv.ParseFloat(args[argIdx+1], 64)
+			if err != nil {
+				return nil, err
 			}
+			if arg != "float_absolute_tolerance" {
+				diffArgs.RelativePrec = tolerance
+			}
+			if arg != "float_relative_tolerance" {
+				diffArgs.AbsolutePrec = tolerance
+			}
+			diffArgs.ParseFloats = true
+			argIdx += 2
+		} else {
+			logger.Warningf("unknown default output validator flags: %v", args)
 		}
 	}
 	return Diff(refFile, outFile, diffArgs)
