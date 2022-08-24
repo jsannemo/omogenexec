@@ -424,11 +424,22 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 	if err := syscall.Mkfifo(programOutput, 0660); err != nil {
 		return nil, fmt.Errorf("failed making interactive pipe: %v", err)
 	}
-	if err := os.Chmod(programInput, 0660); err != nil {
-		return nil, fmt.Errorf("failed chmod on interactive pipe: %v", err)
+
+	e.linker.readBase.GroupWritable = true
+	if err := e.linker.readBase.FixMode("input"); err != nil {
+		return nil, fmt.Errorf("failed fixing mode for interactive input: %v", err)
 	}
-	if err := os.Chmod(programOutput, 0660); err != nil {
-		return nil, fmt.Errorf("failed chmod on interactive pipe: %v", err)
+	if err := e.linker.readBase.FixOwners("input"); err != nil {
+		return nil, fmt.Errorf("failed fixing owners for interactive input: %v", err)
+	}
+	e.linker.readBase.GroupWritable = false
+
+	if err := e.linker.writeBase.FixMode("output"); err != nil {
+		return nil, fmt.Errorf("failed fixing mode for interactive output: %v", err)
+	}
+	if err := e.linker.writeBase.FixOwners("output"); err != nil {
+		return nil, fmt.Errorf("failed fixing owners for interactive output: %v", err)
+
 	}
 	inWrite, err := os.OpenFile(programInput, os.O_CREATE|os.O_RDWR|os.O_APPEND, os.ModeNamedPipe)
 	inRead, err := os.OpenFile(programInput, os.O_CREATE, os.ModeNamedPipe)
@@ -478,7 +489,8 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 		return nil, err
 	}
 	res := &apipb.Result{
-		Score: tg.RejectScore,
+		Score:       tg.RejectScore,
+		TimeUsageMs: programRun.TimeUsageMs,
 	}
 	if programRun.TimedOut() {
 		res.Verdict = apipb.Verdict_TIME_LIMIT_EXCEEDED
@@ -529,8 +541,10 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 				return res, fmt.Errorf("failed validator run: %v", err)
 			}
 			ac = valOutput.Accepted
-			res.Score = valOutput.Score
 			res.Message = valOutput.JudgeMessage
+			if e.plan.ScoringValidator {
+				res.Score = valOutput.Score
+			}
 		} else {
 			diff, err := diffOutput(tc.OutputPath, outPath, tg.OutputValidatorFlags)
 			if err != nil {
@@ -538,17 +552,17 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 			}
 			ac = diff.Match
 			res.Message = diff.Description
-		}
-		if ac {
-			res.Verdict = apipb.Verdict_ACCEPTED
-			if !e.plan.ScoringValidator {
+			if ac {
 				res.Score = tg.AcceptScore
-			}
-		} else {
-			res.Verdict = apipb.Verdict_WRONG_ANSWER
-			if !e.plan.ScoringValidator {
+			} else {
 				res.Score = tg.RejectScore
 			}
+		}
+
+		if ac {
+			res.Verdict = apipb.Verdict_ACCEPTED
+		} else {
+			res.Verdict = apipb.Verdict_WRONG_ANSWER
 		}
 	}
 	res.TimeUsageMs = exit.TimeUsageMs
