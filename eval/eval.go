@@ -470,13 +470,6 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 	wg.Wait()
 	inRead.Close()
 	outRead.Close()
-	if err := e.linker.Clear(); err != nil {
-		return nil, fmt.Errorf("failed clearing program environment: %v", err)
-	}
-	if err := e.valLinker.Clear(); err != nil {
-		return nil, fmt.Errorf("failed clearing validator environment: %v", err)
-	}
-
 	if programErr != nil {
 		return nil, fmt.Errorf("program run failed: %v", programErr)
 	}
@@ -488,6 +481,17 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 	if err != nil {
 		return nil, err
 	}
+
+	if err := e.linker.Clear(); err != nil {
+		return nil, fmt.Errorf("failed clearing program environment: %v", err)
+	}
+	if err := e.linker.Clear(); err != nil {
+		return nil, fmt.Errorf("failed clearing program environment: %v", err)
+	}
+	if err := e.valLinker.Clear(); err != nil {
+		return nil, fmt.Errorf("failed clearing validator environment: %v", err)
+	}
+
 	res := &apipb.Result{
 		Score:       tg.RejectScore,
 		TimeUsageMs: programRun.TimeUsageMs,
@@ -499,7 +503,7 @@ func (e *Evaluator) evaluateInteractive(tc *apipb.TestCase, tg *apipb.TestGroup)
 	} else {
 		res.Message = val.JudgeMessage
 
-		if e.plan.ScoringValidator {
+		if e.plan.ScoringValidator && val.HasScore {
 			res.Score = val.Score
 		} else if val.Accepted {
 			res.Score = tg.AcceptScore
@@ -542,8 +546,12 @@ func (e *Evaluator) evaluateCase(tc *apipb.TestCase, tg *apipb.TestGroup) (*apip
 			}
 			ac = valOutput.Accepted
 			res.Message = valOutput.JudgeMessage
-			if e.plan.ScoringValidator {
+			if e.plan.ScoringValidator && valOutput.HasScore {
 				res.Score = valOutput.Score
+			} else if ac {
+				res.Score = tg.AcceptScore
+			} else {
+				res.Score = tg.RejectScore
 			}
 		} else {
 			diff, err := diffOutput(tc.OutputPath, outPath, tg.OutputValidatorFlags)
@@ -606,6 +614,7 @@ func (e *Evaluator) runSubmission(tcPath, inputPath string) (*execResult, error)
 
 type ValidatorOutput struct {
 	Accepted     bool
+	HasScore     bool
 	Score        float64
 	JudgeMessage string
 }
@@ -657,17 +666,22 @@ func (e *Evaluator) validatorOutputFromExit(exit *execResult) (*ValidatorOutput,
 	judgeMessage, err := e.valLinker.writeBase.ReadFile(judgeMessageFile)
 	if err == nil {
 		output.JudgeMessage = string(judgeMessage)
+		logger.Infof("output validator message: %s", output.JudgeMessage)
 	}
 	if e.plan.ScoringValidator && output.Accepted {
-		scoreStr, err := e.valLinker.writeBase.ReadFile(scoreFile)
+		scoreBytes, err := e.valLinker.writeBase.ReadFile(scoreFile)
+		scoreStr := strings.TrimSpace(string(scoreBytes))
 		if err != nil {
-			return nil, fmt.Errorf("could not read score from scoring validator %v", err)
+			output.HasScore = false
+			logger.Infof("no score.txt from AC output validator?")
+		} else {
+			score, err := strconv.ParseFloat(scoreStr, 64)
+			if err != nil {
+				return nil, fmt.Errorf("could not parse score %s from scoring validator %v", scoreStr, err)
+			}
+			output.Score = score
+			output.HasScore = true
 		}
-		score, err := strconv.ParseFloat(string(scoreStr), 64)
-		if err != nil {
-			return nil, fmt.Errorf("could not parse score %s from scoring validator %v", string(scoreStr), err)
-		}
-		output.Score = score
 	}
 	return output, nil
 }
