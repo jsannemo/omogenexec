@@ -1,10 +1,9 @@
 use cgroups_rs::*;
-
-use chroot::{apply_chroot, make_mount, mount_procfs, read_only_copy_mount, Mount};
+use chroot::{apply_chroot, make_mount, Mount, mount_procfs, read_only_copy_mount};
 use libc_bindings::{
-    close_nonstd_fds, drop_groups, exec, fclose, fork, gid_t, kill, make_closing_pipes,
-    privatize_mounts, repoint_stream, set_kill_on_parent_death, set_res_uid_and_gid, stderr, stdin,
-    stdout, uid_t, wait_any_nohang, wait_for_nohang, FileAccessMode, ForkProcess,
+    close_nonstd_fds, drop_groups, exec, fclose, FileAccessMode, fork, ForkProcess, gid_t,
+    kill, make_closing_pipes, privatize_mounts, repoint_stream, set_kill_on_parent_death, set_res_uid_and_gid,
+    stderr, stdin, stdout, uid_t, wait_any_nohang, wait_for_nohang,
 };
 use std::{
     fs::File,
@@ -30,6 +29,7 @@ pub struct Context {
     pub time_lim: std::time::Duration,
     pub wall_time_lim: std::time::Duration,
     pub pid_limit: i64,
+    pub default_mounts: bool,
 }
 
 fn setup_container_fs(ctx: &Context) {
@@ -42,29 +42,29 @@ fn setup_mounts(ctx: &Context) {
 
     mount_procfs(&ctx.container_path);
 
-    for path in vec!["/bin", "/usr/bin", "/usr/lib", "/lib"] {
-        make_mount(
-            &ctx.container_path,
-            &read_only_copy_mount(PathBuf::from(path)),
-        )
-        .unwrap();
+    if ctx.default_mounts {
+        for path in vec!["/bin", "/usr/bin", "/usr/lib", "/lib"] {
+            make_mount(
+                &ctx.container_path,
+                &read_only_copy_mount(PathBuf::from(path)),
+            )
+                .unwrap();
+        }
     }
     for path in &ctx.readable {
+        let paths = parse_mount_path(path);
         make_mount(
             &ctx.container_path,
-            &read_only_copy_mount(PathBuf::from(path)),
+            &Mount {
+                writable: false,
+                outside: paths.0,
+                inside: paths.1,
+            },
         )
-        .unwrap();
+            .unwrap();
     }
     for path in &ctx.writable {
-        let parts = path.find(':');
-        let paths = match parts {
-            None => (PathBuf::from(path), PathBuf::from(path.to_string())),
-            Some(idx) => (
-                PathBuf::from(path[..idx].to_string()),
-                PathBuf::from(path[idx + 1..].to_string()),
-            ),
-        };
+        let paths = parse_mount_path(path);
         make_mount(
             &ctx.container_path,
             &Mount {
@@ -73,20 +73,33 @@ fn setup_mounts(ctx: &Context) {
                 inside: paths.1,
             },
         )
-        .unwrap();
+            .unwrap();
     }
-    let usrlib32 = PathBuf::from("/usr/lib32");
-    if usrlib32.exists() && usrlib32.is_dir() {
-        make_mount(&ctx.container_path, &read_only_copy_mount(usrlib32)).unwrap();
+    if ctx.default_mounts {
+        let usrlib32 = PathBuf::from("/usr/lib32");
+        if usrlib32.exists() && usrlib32.is_dir() {
+            make_mount(&ctx.container_path, &read_only_copy_mount(usrlib32)).unwrap();
+        }
+        let lib64 = PathBuf::from("/lib64");
+        if lib64.exists() && lib64.is_dir() {
+            make_mount(&ctx.container_path, &read_only_copy_mount(lib64)).unwrap();
+        }
+        let lib32 = PathBuf::from("/lib32");
+        if lib32.exists() && lib32.is_dir() {
+            make_mount(&ctx.container_path, &read_only_copy_mount(lib32)).unwrap();
+        }
     }
-    let lib64 = PathBuf::from("/lib64");
-    if lib64.exists() && lib64.is_dir() {
-        make_mount(&ctx.container_path, &read_only_copy_mount(lib64)).unwrap();
-    }
-    let lib32 = PathBuf::from("/lib32");
-    if lib32.exists() && lib32.is_dir() {
-        make_mount(&ctx.container_path, &read_only_copy_mount(lib32)).unwrap();
-    }
+}
+
+fn parse_mount_path(path: &String) -> (PathBuf, PathBuf) {
+    let parts = path.find(':');
+    return match parts {
+        None => (PathBuf::from(path), PathBuf::from(path.to_string())),
+        Some(idx) => (
+            PathBuf::from(path[..idx].to_string()),
+            PathBuf::from(path[idx + 1..].to_string()),
+        ),
+    };
 }
 
 fn read_command() -> (String, Vec<String>) {
@@ -267,7 +280,6 @@ pub fn sandbox_main(ctx: Context) -> isize {
 }
 
 fn cpu_stat_nanos(stat: String) -> u64 {
-    eprintln!("stat: {:?}", stat);
     for line in stat.split("\n") {
         let fields: Vec<&str> = line.split(' ').collect();
         if fields[0] == "usage_usec" {

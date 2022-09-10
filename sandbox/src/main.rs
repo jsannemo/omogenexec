@@ -50,6 +50,8 @@ struct Opt {
     /// Working directory of the sandbox process
     #[clap(long, default_value = "/")]
     working_dir: String,
+    #[clap(long)]
+    no_default_mounts: bool,
 
     /// The file system quota in blocks
     #[clap(long)]
@@ -102,6 +104,7 @@ fn main() {
         time_lim: std::time::Duration::from_millis(opt.time_lim_ms),
         wall_time_lim: std::time::Duration::from_millis(opt.wall_time_lim_ms),
         pid_limit: opt.pid_limit,
+        default_mounts: !opt.no_default_mounts,
     };
 
     set_quota(opt.blocks, opt.inodes, ctx.sandbox_uid);
