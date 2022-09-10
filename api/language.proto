@@ -12,6 +12,10 @@ enum LanguageGroup {
   JAVA = 3;
   JAVASCRIPT = 4;
   PYTHON_3 = 5;
+  C = 6;
+  RUST = 7;
+  RUBY = 8;
+  GO = 9;
 }
 
 // A Language represents an installed compiler or runtime that can be used to
