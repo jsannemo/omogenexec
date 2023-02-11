@@ -4,8 +4,10 @@ import (
 	"fmt"
 	apipb "github.com/jsannemo/omogenexec/api"
 	"github.com/jsannemo/omogenexec/util"
+	"os"
 	"path"
 	"path/filepath"
+	"strings"
 )
 
 // A Compilation is the result of compiling program sources.
@@ -40,7 +42,7 @@ func Compile(program *apipb.Program, outputPath string) (*Compilation, error) {
 
 // noCompile represents compilation that only copies some of the source files and uses the given
 // run command to execute the program.
-func noCompile(runCommandTemplate []string, include func(string) bool) compileFunc {
+func noCompile(runCommandTemplate []string, include func(string) bool, language apipb.LanguageGroup) compileFunc {
 	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
 		var filteredPaths []string
 		for _, file := range program.Sources {
@@ -52,30 +54,34 @@ func noCompile(runCommandTemplate []string, include func(string) bool) compileFu
 			return &Compilation{CompilerErrors: "No valid source files found"}, nil
 		}
 
-		runCommand := substituteArgs(runCommandTemplate, filteredPaths)
+		runCommand := substituteFiles(runCommandTemplate, filteredPaths)
 		return &Compilation{
 			Program: &apipb.CompiledProgram{
 				ProgramRoot: outputBase.Path(),
 				RunCommand:  runCommand,
+				Language:    language,
 			}}, nil
 	}
 }
 
-func cppCompile(gppPath string) compileFunc {
+func simpleCompile(compilerPath string, compilerFlags []string, exec []string, filter func(string) bool, language apipb.LanguageGroup) compileFunc {
 	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
 		var filteredPaths []string
 		for _, file := range program.Sources {
-			if isCppFile(file.Path) {
+			if filter(file.Path) {
 				filteredPaths = append(filteredPaths, file.Path)
 			}
 		}
-		sandboxArgs := sandboxForCompile(outputBase.Path())
+		if err := outputBase.WriteFile("__compiler_input", []byte{}); err != nil {
+			return nil, err
+		}
+		sandboxArgs := sandboxForCompile(outputBase.Path(), language)
 		sandbox := newSandbox(0, sandboxArgs)
 		err := sandbox.Start()
 		if err != nil {
 			return nil, fmt.Errorf("couldn't start compilation sandbox: %v", err)
 		}
-		run, err := sandbox.Run(append([]string{gppPath}, substituteArgs(gppFlags, filteredPaths)...))
+		run, err := sandbox.Run(append([]string{compilerPath}, substituteFiles(compilerFlags, filteredPaths)...))
 		sandbox.Finish()
 		if err != nil {
 			return nil, fmt.Errorf("sandbox failed: %v, %v", err, sandbox.sandboxErr.String())
@@ -92,34 +98,132 @@ func cppCompile(gppPath string) compileFunc {
 		return &Compilation{
 			Program: &apipb.CompiledProgram{
 				ProgramRoot: outputBase.Path(),
-				RunCommand:  []string{"./a.out"},
+				RunCommand:  exec,
+				Language:    language,
 			}}, nil
 	}
 }
 
-func isCppFile(path string) bool {
-	ext := filepath.Ext(path)
-	return ext == ".cc" || ext == ".cpp"
-}
+func javaCompile(javacFlags []string, javaFlags []string, filter func(string) bool, language apipb.LanguageGroup) compileFunc {
+	return func(program *apipb.Program, outputBase util.FileBase) (*Compilation, error) {
+		var filteredPaths []string
+		for _, file := range program.Sources {
+			if filter(file.Path) {
+				filteredPaths = append(filteredPaths, file.Path)
+			}
+		}
+		if err := outputBase.WriteFile("__compiler_input", []byte{}); err != nil {
+			return nil, err
+		}
+		sandboxArgs := sandboxForCompile(outputBase.Path(), language)
+		sandbox := newSandbox(0, sandboxArgs)
+		err := sandbox.Start()
+		if err != nil {
+			return nil, fmt.Errorf("couldn't start compilation sandbox: %v", err)
+		}
+		run, err := sandbox.Run(append([]string{"/usr/bin/javac"}, substituteFiles(javacFlags, filteredPaths)...))
+		if err != nil {
+			return nil, fmt.Errorf("sandbox failed: %v, %v", err, sandbox.sandboxErr.String())
+		}
+		stderr, err := outputBase.ReadFile("__compiler_errors")
+		if err != nil {
+			return nil, fmt.Errorf("could not read compiler errors: %v", err)
+		}
+		if !run.CrashedWith(0) {
+			return &Compilation{
+				CompilerErrors: string(stderr),
+			}, nil
+		}
 
-func sandboxForCompile(sourcePath string) sandboxArgs {
-	return sandboxArgs{
-		WorkingDirectory: sourcePath,
-		InputPath:        "",
-		OutputPath:       "",
-		ErrorPath:        path.Join(sourcePath, "__compiler_errors"),
-		ExtraReadPaths:   []string{"/usr/include"},
-		ExtraWritePaths:  []string{sourcePath},
-		TimeLimitMs:      60 * 1000,
-		MemoryLimitKb:    1000 * 1000,
+		var mains []string
+		if err := filepath.Walk(outputBase.Path(),
+			func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if filepath.Ext(path) == ".class" {
+					run, err := sandbox.Run(append([]string{"/usr/bin/javap", path}))
+					if err != nil {
+						return err
+					}
+					if run.Crashed() || run.TimedOut() {
+						return fmt.Errorf("javap crashed")
+					}
+					stdout, err := outputBase.ReadFile("__compiler_output")
+					if err != nil {
+						return err
+					}
+					stdoutStr := string(stdout)
+					if strings.Contains(stdoutStr, "public static void main(java.lang.String[]);") ||
+						strings.Contains(stdoutStr, "public static void main(java.lang.String...);") {
+						lines := strings.Split(stdoutStr, "\n")
+						for _, line := range lines {
+							tokens := strings.Split(line, " ")
+							if tokens[0] == "class" {
+								mains = append(mains, tokens[1])
+							} else if tokens[0] == "public" && tokens[1] == "class" {
+								mains = append(mains, tokens[2])
+							}
+						}
+					}
+				}
+				return nil
+			}); err != nil {
+			return nil, err
+		}
+		sandbox.Finish()
+		if len(mains) == 0 {
+			return &Compilation{
+				CompilerErrors: "No main function found",
+			}, nil
+		}
+		if len(mains) > 1 {
+			return &Compilation{
+				CompilerErrors: "Multiple main functions found",
+			}, nil
+		}
+		return &Compilation{
+			Program: &apipb.CompiledProgram{
+				ProgramRoot: outputBase.Path(),
+				RunCommand:  append([]string{"/usr/bin/java"}, substituteMain(javaFlags, mains[0])...),
+				Language:    language,
+			}}, nil
 	}
 }
 
-func substituteArgs(args []string, paths []string) []string {
+func sandboxForCompile(sourcePath string, language apipb.LanguageGroup) sandboxArgs {
+	args := sandboxArgs{
+		WorkingDirectory: sourcePath,
+		InputPath:        path.Join(sourcePath, "__compiler_input"),
+		OutputPath:       path.Join(sourcePath, "__compiler_output"),
+		ErrorPath:        path.Join(sourcePath, "__compiler_errors"),
+		ExtraWritePaths:  []string{sourcePath},
+		TimeLimitMs:      60 * 1000,
+		MemoryLimitKb:    1000 * 1000,
+		Pids:             30,
+		Env:              map[string]string{"TMPDIR": sourcePath},
+	}
+	setLanguageSandbox(&args, language)
+	return args
+}
+
+func substituteFiles(args []string, paths []string) []string {
 	var newArgs []string
 	for _, arg := range args {
 		if arg == "{files}" {
 			newArgs = append(newArgs, paths...)
+		} else {
+			newArgs = append(newArgs, arg)
+		}
+	}
+	return newArgs
+}
+
+func substituteMain(args []string, main string) []string {
+	var newArgs []string
+	for _, arg := range args {
+		if arg == "{main}" {
+			newArgs = append(newArgs, main)
 		} else {
 			newArgs = append(newArgs, arg)
 		}

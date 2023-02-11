@@ -3,7 +3,7 @@
 mkdir -p /var/lib/omogen/sandbox/
 addgroup --system omogenexec-users --quiet
 adduser --system omogenexec-user --no-create-home --quiet
-for k in {0..99}; do
+for k in {0..15}; do
   # adduser doesn't fail if the user already exists
   adduser --system omogenexec-user$k --no-create-home --quiet
   adduser --quiet omogenexec-user$k omogenexec-users
@@ -13,3 +13,9 @@ usermod -g omogenexec-users omogenexec-user
 
 chmod u+s /usr/bin/omogenexec
 chmod u+s /usr/bin/omogenexec-fixpermissions
+
+for lang in cpp csharp go java python3 ruby rust
+do
+  mkdir -p /var/lib/omogen/fs/$lang
+  tar --zstd -xf /var/lib/omogen/fs/$lang.tar.zst -C /var/lib/omogen/fs/$lang
+done

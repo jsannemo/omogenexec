@@ -17,4 +17,5 @@ message Program {
 message CompiledProgram {
   string program_root = 1;
   repeated string run_command = 2;
+  LanguageGroup language = 3;
 }

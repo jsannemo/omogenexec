@@ -86,6 +86,7 @@ func (e *Evaluator) initProgram() error {
 		TimeLimitMs:     int(e.plan.TimeLimitMs),
 		MemoryLimitKb:   int(e.plan.MemLimitKb),
 	}
+	setLanguageSandbox(&args, e.plan.Program.Language)
 	e.programSandbox = newSandbox(0, args)
 	return nil
 }

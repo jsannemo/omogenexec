@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-for k in {0..99}; do
+rm -rf /var/lib/omogen/fs/{cpp,csharp,go,java,python3,ruby,rust}
+for k in {0..15}; do
   # adduser doesn't fail if the user already exists
   deluser --system omogenexec-user$k
 done

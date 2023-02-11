@@ -25,6 +25,7 @@ pub struct Context {
     pub readable: Vec<String>,
     pub writable: Vec<String>,
     pub working_directory: PathBuf,
+    pub env: Vec<String>,
     pub mem_limit_bytes: i64,
     pub time_lim: std::time::Duration,
     pub wall_time_lim: std::time::Duration,
@@ -154,6 +155,7 @@ pub fn sandbox_main(ctx: Context) -> isize {
     let cg_pid: &cgroups_rs::pid::PidController = cg.controller_of().unwrap();
     cg_mem.set_limit(ctx.mem_limit_bytes).unwrap();
     setup_container_fs(&ctx);
+
     loop {
         let cmd = read_command();
         if cmd.0.len() == 0 {
@@ -323,7 +325,7 @@ fn setup_and_run(err_pipe: i32, cmd: String, args: Vec<String>, ctx: &Context) {
         process::exit(1);
     });
     write!(&mut err_file, "ok").unwrap();
-    exec(cmd.clone(), args.clone()).unwrap_or_else(|err| {
+    exec(cmd.clone(), args.clone(), ctx.env.clone()).unwrap_or_else(|err| {
         eprintln!("{:?}", err);
         write!(&mut err_file, "exec").unwrap();
         process::exit(1);

@@ -1,10 +1,10 @@
+use libc::{dqblk, Q_SETQUOTA, QCMD, QIF_LIMITS, quotactl, SYS_close_range, USRQUOTA};
 pub use libc::dev_t;
+pub use libc::FILE;
 pub use libc::gid_t;
 pub use libc::pid_t;
 pub use libc::stat;
 pub use libc::uid_t;
-pub use libc::FILE;
-use libc::{dqblk, quotactl, SYS_close_range, QCMD, QIF_LIMITS, Q_SETQUOTA, USRQUOTA};
 use std::ffi::CString;
 use std::io::Error;
 use std::os::unix::ffi::OsStrExt;
@@ -114,7 +114,7 @@ pub fn chdir(path: &Path) -> Result<(), String> {
     }
 }
 
-pub fn exec(executable: String, mut args: Vec<String>) -> Result<(), String> {
+pub fn exec(executable: String, mut args: Vec<String>, mut env: Vec<String>) -> Result<(), String> {
     let mut args_cstrs = Vec::with_capacity(args.len());
     let mut args_pointers = Vec::with_capacity(args.len());
     args_cstrs.push(CString::new(executable.clone()).unwrap());
@@ -124,11 +124,22 @@ pub fn exec(executable: String, mut args: Vec<String>) -> Result<(), String> {
         args_pointers.push(args_cstrs.last().unwrap().as_ptr());
     }
     args_pointers.push(ptr::null());
+
+    let mut env_cstrs = Vec::with_capacity(env.len());
+    let mut env_pointers = Vec::with_capacity(env.len());
+    env_cstrs.push(CString::new(executable.clone()).unwrap());
+    env_pointers.push(env_cstrs.last().unwrap().as_ptr());
+    for e in env.drain(..) {
+        env_cstrs.push(CString::new(e).unwrap());
+        env_pointers.push(env_cstrs.last().unwrap().as_ptr());
+    }
+    env_pointers.push(ptr::null());
     unsafe {
         #[allow(temporary_cstring_as_ptr)]
-        libc::execvp(
+        libc::execvpe(
             CString::new(executable).unwrap().as_ptr(),
             args_pointers.as_ptr(),
+            env_pointers.as_ptr(),
         )
     };
     Err(format!("execvp: {:?}", Error::last_os_error()))
@@ -217,7 +228,7 @@ pub struct Passwd {
 pub fn find_user(username: String) -> Result<Passwd, String> {
     reset_errno();
     #[allow(temporary_cstring_as_ptr)]
-    let ret = unsafe { libc::getpwnam(CString::new(username).unwrap().as_ptr()) };
+        let ret = unsafe { libc::getpwnam(CString::new(username).unwrap().as_ptr()) };
     if ret == ptr::null_mut() {
         Err(format!("getpwnam: {:?}", Error::last_os_error()))
     } else {
@@ -232,7 +243,7 @@ pub struct Group {
 pub fn find_group(group_name: String) -> Result<Group, String> {
     reset_errno();
     #[allow(temporary_cstring_as_ptr)]
-    let ret = unsafe { libc::getgrnam(CString::new(group_name).unwrap().as_ptr()) };
+        let ret = unsafe { libc::getgrnam(CString::new(group_name).unwrap().as_ptr()) };
     if ret == ptr::null_mut() {
         Err(format!("getgrnam: {:?}", Error::last_os_error()))
     } else {
@@ -272,7 +283,7 @@ pub fn repoint_stream(path: String, stream: *mut FILE, mode: FileAccessMode) -> 
         FileAccessMode::Writable => "w",
     };
     #[allow(temporary_cstring_as_ptr)]
-    let ret = unsafe {
+        let ret = unsafe {
         libc::freopen(
             CString::new(path).unwrap().as_ptr(),
             CString::new(access).unwrap().as_ptr(),
@@ -325,7 +336,7 @@ pub fn set_user_quota(
         quota.dqb_isoftlimit = inode_quota;
         quota.dqb_valid = QIF_LIMITS;
         #[allow(temporary_cstring_as_ptr)]
-        let ret = quotactl(
+            let ret = quotactl(
             QCMD(Q_SETQUOTA, USRQUOTA),
             CString::new(mount_dev.as_os_str().as_bytes())
                 .unwrap()
@@ -357,6 +368,20 @@ pub fn close_nonstd_fds() -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("close_range: {:?}", Error::last_os_error()))
+    }
+}
+
+pub fn set_rlimit(resource: libc::__rlimit_resource_t, soft: u64, hard: u64) -> Result<(), String>  {
+    let ret = unsafe {
+        let mut rlimit = std::mem::MaybeUninit::<libc::rlimit64>::uninit().assume_init();
+        rlimit.rlim_cur = soft;
+        rlimit.rlim_max = hard;
+        libc::setrlimit64(resource, &rlimit)
+    };
+    if ret == 0 {
+        Ok(())
+    } else {
+        Err(format!("setrlimit64: {:?}", Error::last_os_error()))
     }
 }
 

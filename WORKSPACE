@@ -1,4 +1,4 @@
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_file")
 
 http_archive(
     name = "rules_rust",
@@ -363,3 +363,52 @@ http_archive(
 load("@com_google_protobuf//:protobuf_deps.bzl", "protobuf_deps")
 
 protobuf_deps()
+
+http_file(
+    name = "omogenfs-cpp",
+    urls = ["https://github.com/jsannemo/omogenexec-fs/releases/download/2023-02-09/omogen-cpp-fs.tar.zst"],
+    sha256 = "89bc6eaf46aed41b088d16a099be7daa4034c5c9b85be4c0e5aa41a0f4b1f373",
+    downloaded_file_path = "cpp.tar.zst",
+)
+
+http_file(
+    name = "omogenfs-csharp",
+    urls = ["https://github.com/jsannemo/omogenexec-fs/releases/download/2023-02-09/omogen-csharp-fs.tar.zst"],
+    sha256 = "3d472b38390d805601aa6205421e2364a44ae8d3cb203963253caa28966a896b",
+    downloaded_file_path = "csharp.tar.zst",
+)
+
+http_file(
+    name = "omogenfs-go",
+    urls = ["https://github.com/jsannemo/omogenexec-fs/releases/download/2023-02-09/omogen-go-fs.tar.zst"],
+    sha256 = "481b0d0c2e2c796723e3f0a930a2c4cf8ef97f1d60ea1617c68e2daef993e613",
+    downloaded_file_path = "go.tar.zst",
+)
+
+http_file(
+    name = "omogenfs-java",
+    urls = ["https://github.com/jsannemo/omogenexec-fs/releases/download/2023-02-09/omogen-java-fs.tar.zst"],
+    sha256 = "514c53d9c1a60dde8949b5b81d55d494a3a6463d33120c2cc18b5fa7c96d7291",
+    downloaded_file_path = "java.tar.zst",
+)
+
+http_file(
+    name = "omogenfs-python3",
+    urls = ["https://github.com/jsannemo/omogenexec-fs/releases/download/2023-02-09/omogen-python3-fs.tar.zst"],
+    sha256 = "17a499a07d5f527398631a4006e1d795127c23506f098f0e2a0e395ce739a16b",
+    downloaded_file_path = "python3.tar.zst",
+)
+
+http_file(
+    name = "omogenfs-ruby",
+    urls = ["https://github.com/jsannemo/omogenexec-fs/releases/download/2023-02-09/omogen-ruby-fs.tar.zst"],
+    sha256 = "cfc33a186d99344a99dc815fd8c669c7629d403b719b0d87d3880f3e094150a5",
+    downloaded_file_path = "ruby.tar.zst",
+)
+
+http_file(
+    name = "omogenfs-rust",
+    urls = ["https://github.com/jsannemo/omogenexec-fs/releases/download/2023-02-09/omogen-rust-fs.tar.zst"],
+    sha256 = "9221bbb7705d00d25d954cb569ea92633c586db3690eea491fda4f483f42aef0",
+    downloaded_file_path = "rust.tar.zst",
+)

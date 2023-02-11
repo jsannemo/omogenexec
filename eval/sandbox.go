@@ -12,14 +12,17 @@ import (
 )
 
 type sandboxArgs struct {
-	WorkingDirectory string
-	InputPath        string
-	OutputPath       string
-	ErrorPath        string
-	ExtraReadPaths   []string
-	ExtraWritePaths  []string
-	TimeLimitMs      int
-	MemoryLimitKb    int
+	WorkingDirectory  string
+	InputPath         string
+	OutputPath        string
+	ErrorPath         string
+	ExtraReadPaths    []string
+	ExtraWritePaths   []string
+	SkipDefaultMounts bool
+	TimeLimitMs       int
+	MemoryLimitKb     int
+	Pids              int
+	Env               map[string]string
 }
 
 type sandboxWrapper struct {
@@ -36,12 +39,15 @@ func newSandbox(id int, args sandboxArgs) *sandboxWrapper {
 		"--time-lim-ms", strconv.Itoa(args.TimeLimitMs),
 		"--wall-time-lim-ms", strconv.Itoa(args.TimeLimitMs*2 + 1000),
 		"--memory-mb", strconv.Itoa(args.MemoryLimitKb),
-		"--pid-limit", "10",
 		"--inodes", "1000",
 		"--blocks", strconv.Itoa(1_000_000_000 / 4096),
 	}
 	readPaths := args.ExtraReadPaths
 	writePaths := args.ExtraWritePaths
+	if args.Pids == 0 {
+		args.Pids = 30
+	}
+	sandboxArgs = append(sandboxArgs, "--pid-limit", strconv.Itoa(args.Pids))
 	if args.WorkingDirectory != "" {
 		sandboxArgs = append(sandboxArgs, "--working-dir", args.WorkingDirectory)
 	}
@@ -57,13 +63,18 @@ func newSandbox(id int, args sandboxArgs) *sandboxWrapper {
 		sandboxArgs = append(sandboxArgs, "--stderr", args.ErrorPath)
 		writePaths = append(writePaths, filepath.Dir(args.ErrorPath))
 	}
+	if args.SkipDefaultMounts {
+		sandboxArgs = append(sandboxArgs, "--no-default-mounts")
+	}
+	if _, ok := args.Env["PATH"]; !ok {
+		sandboxArgs = append(sandboxArgs, "--env", "PATH=/bin/:usr/bin")
+	}
+	for key, value := range args.Env {
+		sandboxArgs = append(sandboxArgs, "--env", fmt.Sprintf("%s=%s", key, value))
+	}
 	sandboxArgs = append(sandboxArgs, mountArgs(readPaths, writePaths)...)
 	logger.Infof("Sandbox %d running with args %v", id, sandboxArgs)
 	cmd := exec.Command("/usr/bin/omogenexec", sandboxArgs...)
-	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
-	}
-
 	sandbox := &sandboxWrapper{
 		cmd: cmd,
 	}
@@ -76,7 +87,7 @@ func newSandbox(id int, args sandboxArgs) *sandboxWrapper {
 	if err != nil {
 		return nil
 	}
-	sandbox.sandboxOut = bufio.NewScanner(outPipe)
+	sandbox.sandboxOut = bufio.NewScanner(bufio.NewReader(outPipe))
 	sandbox.sandboxOut.Split(bufio.ScanWords)
 	cmd.Stderr = &sandbox.sandboxErr
 	return sandbox
@@ -115,6 +126,7 @@ func (s *sandboxWrapper) Run(cmdAndArgs []string) (*execResult, error) {
 			if killReason == "tle" {
 				res.ExitType = timedOut
 			} else if killReason == "setup" {
+				s.Finish()
 				return res, fmt.Errorf("sandbox died during setup: %v", s.logs())
 			} else {
 				logger.Fatalf("Unrecognized output from sandbox (killed %s)", killReason)
@@ -151,6 +163,7 @@ func (s *sandboxWrapper) Run(cmdAndArgs []string) (*execResult, error) {
 			res.TimeUsageMs = cpu
 		}
 	}
+	logger.Infof("Sandbox run complete")
 	return res, nil
 }
 

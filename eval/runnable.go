@@ -14,7 +14,7 @@ const (
 
 // An execResult describes the EvalResult of a single execution.
 type execResult struct {
-	// How how the program exited.
+	// How the program exited.
 	ExitType exitType
 	// The exit code. Only set if the program exited with a code.
 	ExitCode int

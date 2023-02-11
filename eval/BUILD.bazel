@@ -10,6 +10,7 @@ go_library(
         "language.go",
         "runnable.go",
         "sandbox.go",
+        "fs.go",
     ],
     importpath = "github.com/jsannemo/omogenexec/eval",
     visibility = ["//visibility:public"],

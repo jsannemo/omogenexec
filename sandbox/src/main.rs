@@ -11,7 +11,7 @@ mod quota;
 mod sandbox;
 
 use clap::Clap;
-use libc_bindings::{find_group, find_user, pid_t, set_kill_on_parent_death, wait_for};
+use libc_bindings::{find_group, find_user, pid_t, set_kill_on_parent_death, wait_for, set_rlimit};
 use quota::set_quota;
 use sandbox::{sandbox_main, Context};
 use std::{
@@ -52,6 +52,9 @@ struct Opt {
     working_dir: String,
     #[clap(long)]
     no_default_mounts: bool,
+    /// Environment variables for the sandbox process
+    #[clap(long)]
+    env: Vec<String>,
 
     /// The file system quota in blocks
     #[clap(long)]
@@ -97,6 +100,7 @@ fn main() {
         stdin: opt.stdin.unwrap_or("".to_string()),
         stdout: opt.stdout.unwrap_or("".to_string()),
         stderr: opt.stderr.unwrap_or("".to_string()),
+        env: opt.env,
         readable: opt.readable,
         writable: opt.writable,
         working_directory: PathBuf::from(opt.working_dir),
@@ -108,6 +112,7 @@ fn main() {
     };
 
     set_quota(opt.blocks, opt.inodes, ctx.sandbox_uid);
+    set_rlimit(libc::RLIMIT_STACK, libc::RLIM_INFINITY, libc::RLIM_INFINITY).unwrap();
     let ref mut stack = Stack([0; 2 * 1024 * 1024]);
     let mut cloned = ctx.clone();
     let sandbox_pid = unsafe {

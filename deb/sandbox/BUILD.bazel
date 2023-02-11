@@ -17,9 +17,25 @@ pkg_tar(
 )
 
 pkg_tar(
+    name = "omogenexec-fs",
+    srcs = [
+        "@omogenfs-cpp//file",
+        "@omogenfs-csharp//file",
+        "@omogenfs-go//file",
+        "@omogenfs-java//file",
+        "@omogenfs-python3//file",
+        "@omogenfs-ruby//file",
+        "@omogenfs-rust//file",
+    ],
+    mode = "0644",
+    package_dir = "/var/lib/omogen/fs/"
+)
+
+pkg_tar(
     name = "debian-data",
     extension = "tar.gz",
     deps = [
+        ":omogenexec-fs",
         ":omogenexec-bin",
         ":omogenexec-permissions-bin",
     ],
