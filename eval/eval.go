@@ -124,7 +124,7 @@ func (e *Evaluator) initValidator() error {
 	e.validatorCommandTemplate = append(e.validatorCommandTemplate,
 		e.valLinker.PathFor("input", false),
 		e.valLinker.PathFor("judge_answer", false),
-		e.valLinker.PathFor(".", true),
+		e.valLinker.PathFor(".", true)+string(filepath.Separator),
 	)
 	return nil
 }
